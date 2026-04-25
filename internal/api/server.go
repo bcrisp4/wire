@@ -62,6 +62,11 @@ func NewServer(opts Options) (*Server, error) {
 		}
 	}
 	// end Unit 8: entries
+	// Unit 9: search
+	if opts.Store != nil {
+		mux.Handle("GET /api/v1/search", searchHandler(opts.Store, opts.Logger))
+	}
+	// end Unit 9: search
 
 	if opts.SPA != nil {
 		mux.Handle("/", opts.SPA)
