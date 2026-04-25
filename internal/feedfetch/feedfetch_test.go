@@ -304,3 +304,32 @@ type errTransport struct{}
 func (errTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	return nil, errors.New("sentinel-transport")
 }
+
+func TestWithTimeout_ClampsNonPositive(t *testing.T) {
+	for _, d := range []time.Duration{0, -1 * time.Second} {
+		f := New(WithTimeout(d))
+		assert.Equal(t, defaultTimeout, f.timeout, "WithTimeout(%v) should clamp to default", d)
+	}
+
+	f := New(WithTimeout(5 * time.Second))
+	assert.Equal(t, 5*time.Second, f.timeout)
+}
+
+func TestWithMaxBodyBytes_ClampsNegative(t *testing.T) {
+	f := New(WithMaxBodyBytes(-1))
+	assert.Equal(t, int64(defaultMaxBodyBytes), f.maxBodyBytes)
+
+	// Zero is a legitimate caller choice (every body is too large) and
+	// must be preserved; the request still succeeds for empty bodies.
+	f0 := New(WithMaxBodyBytes(0))
+	assert.Equal(t, int64(0), f0.maxBodyBytes)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+	_, err := f0.Fetch(context.Background(), Request{URL: srv.URL})
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrBodyTooLarge))
+}

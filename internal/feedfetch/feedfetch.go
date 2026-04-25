@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -70,13 +71,30 @@ type Response struct {
 type Option func(*Fetcher)
 
 // WithTimeout sets the per-request timeout. Default 30s.
+// Non-positive durations are treated as the default timeout, since Fetch
+// always wraps the caller context with context.WithTimeout and a zero or
+// negative deadline would fail every request immediately.
 func WithTimeout(d time.Duration) Option {
-	return func(f *Fetcher) { f.timeout = d }
+	return func(f *Fetcher) {
+		if d <= 0 {
+			f.timeout = defaultTimeout
+			return
+		}
+		f.timeout = d
+	}
 }
 
 // WithMaxBodyBytes caps response body size. Default 10 MB.
+// Negative values are treated as the default; they would otherwise make
+// every response trip the body-too-large check.
 func WithMaxBodyBytes(n int64) Option {
-	return func(f *Fetcher) { f.maxBodyBytes = n }
+	return func(f *Fetcher) {
+		if n < 0 {
+			f.maxBodyBytes = defaultMaxBodyBytes
+			return
+		}
+		f.maxBodyBytes = n
+	}
 }
 
 // WithUserAgent sets the User-Agent header sent on requests.
@@ -221,10 +239,14 @@ func drainBody(r io.Reader, max int64) {
 }
 
 // readCapped reads at most max+1 bytes; if the +1 byte arrives, the body
-// exceeded the cap and we return ErrBodyTooLarge.
+// exceeded the cap and we return ErrBodyTooLarge. The math.MaxInt64 guard
+// prevents max+1 from wrapping negative on absurdly large limits.
 func readCapped(r io.Reader, max int64) ([]byte, error) {
-	limited := io.LimitReader(r, max+1)
-	buf, err := io.ReadAll(limited)
+	limit := max
+	if limit < math.MaxInt64 {
+		limit = max + 1
+	}
+	buf, err := io.ReadAll(io.LimitReader(r, limit))
 	if err != nil {
 		return nil, fmt.Errorf("feedfetch: read body: %w", err)
 	}
