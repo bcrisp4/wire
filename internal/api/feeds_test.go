@@ -21,12 +21,15 @@ import (
 // avoid spinning up SQLite in API-package tests while still exercising the
 // handler-level logic (json shapes, status codes, queue interaction).
 type fakeFeedRepo struct {
-	mu    sync.Mutex
-	next  int64
-	feeds map[int64]*model.Feed
+	mu     sync.Mutex
+	next   int64
+	feeds  map[int64]*model.Feed
+	unread map[int64]int
 }
 
-func newFakeFeedRepo() *fakeFeedRepo { return &fakeFeedRepo{feeds: map[int64]*model.Feed{}} }
+func newFakeFeedRepo() *fakeFeedRepo {
+	return &fakeFeedRepo{feeds: map[int64]*model.Feed{}, unread: map[int64]int{}}
+}
 
 func (r *fakeFeedRepo) List(_ context.Context, userID int64) ([]model.Feed, error) {
 	r.mu.Lock()
@@ -38,6 +41,23 @@ func (r *fakeFeedRepo) List(_ context.Context, userID int64) ([]model.Feed, erro
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// ListWithUnreadCounts mirrors List but attaches a per-feed unread count
+// driven by the unread map. Tests that need a non-zero count populate
+// fakeFeedRepo.unread[feedID]; unset feeds report 0.
+func (r *fakeFeedRepo) ListWithUnreadCounts(ctx context.Context, userID int64) ([]store.FeedWithUnreadCount, error) {
+	feeds, err := r.List(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]store.FeedWithUnreadCount, 0, len(feeds))
+	for _, f := range feeds {
+		out = append(out, store.FeedWithUnreadCount{Feed: f, UnreadCount: r.unread[f.ID]})
+	}
 	return out, nil
 }
 
@@ -284,6 +304,32 @@ func TestFeeds_RefreshEnqueuesJob(t *testing.T) {
 	var payload map[string]int64
 	require.NoError(t, json.Unmarshal(job.Payload, &payload))
 	assert.Equal(t, int64(1), payload["feed_id"])
+}
+
+// TestFeeds_ListIncludesUnreadCount asserts that GET /api/v1/feeds includes
+// the unread_count field on every entry, populated from the store-side
+// aggregate. The fakeFeedRepo's unread map mirrors the LEFT JOIN aggregate
+// the production repo runs against SQLite.
+func TestFeeds_ListIncludesUnreadCount(t *testing.T) {
+	srv, repo, _ := newTestAPIServer(t)
+	require.NoError(t, repo.Create(context.Background(), &model.Feed{
+		UserID: defaultUserID, Title: "A", FeedURL: "https://a/rss", PollInterval: 3600,
+	}))
+	require.NoError(t, repo.Create(context.Background(), &model.Feed{
+		UserID: defaultUserID, Title: "B", FeedURL: "https://b/rss", PollInterval: 3600,
+	}))
+	repo.unread[1] = 5
+	// repo.unread[2] left unset -> handler must still surface 0, not omit the field.
+
+	w := doJSON(t, srv, "GET", "/api/v1/feeds", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var list []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &list))
+	require.Len(t, list, 2)
+	require.Contains(t, list[0], "unread_count")
+	require.Contains(t, list[1], "unread_count")
+	assert.Equal(t, float64(5), list[0]["unread_count"])
+	assert.Equal(t, float64(0), list[1]["unread_count"])
 }
 
 func TestFeeds_RefreshUnknownReturns404(t *testing.T) {

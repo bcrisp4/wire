@@ -198,6 +198,54 @@ func TestFeedRepo_UpdateBadCategoryFKReturnsErrInvalid(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrInvalid), "expected ErrInvalid, got %v", err)
 }
 
+func TestFeedRepo_ListWithUnreadCounts(t *testing.T) {
+	r := newTestFeedRepo(t)
+	ctx := context.Background()
+
+	// Three feeds for user 1 plus one for user 2 to verify scoping.
+	_, err := r.db.ExecContext(ctx, `INSERT INTO users(id, username) VALUES (2, 'other')`)
+	require.NoError(t, err)
+	mk := func(userID int64, url string) int64 {
+		f := &model.Feed{UserID: userID, Title: url, FeedURL: url, PollInterval: 3600}
+		require.NoError(t, r.Create(ctx, f))
+		return f.ID
+	}
+	a := mk(1, "https://a.example/rss")
+	b := mk(1, "https://b.example/rss")
+	mk(1, "https://empty.example/rss") // no entries — must still appear with 0
+	mk(2, "https://other.example/rss") // wrong user — must not appear
+
+	// Seed entries: feed a -> 2 unread + 1 read; feed b -> 1 unread; empty feed -> none.
+	mkEntry := func(feedID int64, hash string, read int) {
+		_, err := r.db.ExecContext(ctx,
+			`INSERT INTO entries(feed_id, user_id, hash, title, read) VALUES (?, 1, ?, 'x', ?)`,
+			feedID, hash, read,
+		)
+		require.NoError(t, err)
+	}
+	mkEntry(a, "a1", 0)
+	mkEntry(a, "a2", 0)
+	mkEntry(a, "a3", 1)
+	mkEntry(b, "b1", 0)
+
+	got, err := r.ListWithUnreadCounts(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, got, 3, "feeds with 0 entries must still appear")
+
+	byID := make(map[int64]int, len(got))
+	for _, f := range got {
+		byID[f.ID] = f.UnreadCount
+	}
+	assert.Equal(t, 2, byID[a])
+	assert.Equal(t, 1, byID[b])
+	// The third feed (no entries) is the only one in got with neither id a nor b.
+	for _, f := range got {
+		if f.ID != a && f.ID != b {
+			assert.Equal(t, 0, f.UnreadCount, "feed with no entries must report 0")
+		}
+	}
+}
+
 func TestFeedRepo_DueForPollingRespectsLimit(t *testing.T) {
 	r := newTestFeedRepo(t)
 	ctx := context.Background()

@@ -143,3 +143,47 @@ func TestCategoryRepo_DeleteMissingReturnsErrNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrNotFound)
 }
+
+func TestCategoryRepo_ListWithUnreadCounts(t *testing.T) {
+	s := newTestStoreCategories(t)
+	ctx := context.Background()
+
+	// News (with feeds + entries), Tech (one feed, no entries), Empty (no feeds).
+	news := &model.Category{UserID: 1, Name: "News"}
+	tech := &model.Category{UserID: 1, Name: "Tech"}
+	empty := &model.Category{UserID: 1, Name: "Empty"}
+	require.NoError(t, s.Categories().Create(ctx, news))
+	require.NoError(t, s.Categories().Create(ctx, tech))
+	require.NoError(t, s.Categories().Create(ctx, empty))
+
+	mkFeed := func(catID int64, url string) int64 {
+		f := &model.Feed{UserID: 1, CategoryID: &catID, Title: url, FeedURL: url, PollInterval: 3600}
+		require.NoError(t, s.Feeds().Create(ctx, f))
+		return f.ID
+	}
+	a := mkFeed(news.ID, "https://a.example/rss")
+	b := mkFeed(news.ID, "https://b.example/rss")
+	mkFeed(tech.ID, "https://t.example/rss") // feed with no entries
+
+	// 3 unread + 1 read across the News category; nothing for Tech or Empty.
+	// We're inside the store package, so cast to the concrete repo to reach the *sql.DB.
+	cr := s.Categories().(*categoryRepo)
+	_, err := cr.db.ExecContext(ctx,
+		`INSERT INTO entries(feed_id, user_id, hash, title, read) VALUES
+		 (?, 1, 'a1', 'x', 0), (?, 1, 'a2', 'x', 0), (?, 1, 'a3', 'x', 1),
+		 (?, 1, 'b1', 'x', 0)`,
+		a, a, a, b)
+	require.NoError(t, err)
+
+	got, err := s.Categories().ListWithUnreadCounts(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, got, 3, "all categories must appear, even those with no feeds")
+
+	byName := make(map[string]int, len(got))
+	for _, c := range got {
+		byName[c.Name] = c.UnreadCount
+	}
+	assert.Equal(t, 3, byName["News"])
+	assert.Equal(t, 0, byName["Tech"])
+	assert.Equal(t, 0, byName["Empty"])
+}

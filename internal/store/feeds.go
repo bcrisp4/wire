@@ -20,6 +20,16 @@ const feedColumns = `id, user_id, category_id, icon_id, title, feed_url, site_ur
 	error_count, last_error, weekly_entry_count, crawler, scraper_rules, disabled,
 	ignore_entry_updates, created_at, updated_at`
 
+// feedColumnsQualified mirrors feedColumns but prefixes each column with
+// `feeds.` so the same SELECT list is unambiguous when joining other tables
+// (e.g. entries) that share column names like `id` or `user_id`.
+const feedColumnsQualified = `feeds.id, feeds.user_id, feeds.category_id, feeds.icon_id,
+	feeds.title, feeds.feed_url, feeds.site_url, feeds.description, feeds.etag,
+	feeds.last_modified, feeds.last_polled_at, feeds.next_poll_at, feeds.poll_interval,
+	feeds.error_count, feeds.last_error, feeds.weekly_entry_count, feeds.crawler,
+	feeds.scraper_rules, feeds.disabled, feeds.ignore_entry_updates, feeds.created_at,
+	feeds.updated_at`
+
 // scanFeed reads one row's columns (in feedColumns order) into a model.Feed,
 // translating sql.NullX into the *string / *int64 nullable fields.
 func scanFeed(scanner interface{ Scan(...any) error }) (*model.Feed, error) {
@@ -105,6 +115,51 @@ func (r *feedRepo) List(ctx context.Context, userID int64) ([]model.Feed, error)
 		return nil, fmt.Errorf("feeds.List: %w", err)
 	}
 	return out, nil
+}
+
+// ListWithUnreadCounts returns all feeds for userID along with each feed's
+// unread-entry count in a single round trip. LEFT JOIN + COALESCE ensures
+// feeds with zero entries report UnreadCount = 0 rather than being dropped.
+func (r *feedRepo) ListWithUnreadCounts(ctx context.Context, userID int64) ([]FeedWithUnreadCount, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT `+feedColumnsQualified+`,
+		        COALESCE(SUM(CASE WHEN entries.read = 0 THEN 1 ELSE 0 END), 0) AS unread_count
+		   FROM feeds
+		   LEFT JOIN entries
+		          ON entries.feed_id = feeds.id
+		         AND entries.user_id = feeds.user_id
+		  WHERE feeds.user_id = ?
+		  GROUP BY feeds.id
+		  ORDER BY feeds.id`, userID)
+	if err != nil {
+		return nil, fmt.Errorf("feeds.ListWithUnreadCounts: %w", err)
+	}
+	defer rows.Close()
+	var out []FeedWithUnreadCount
+	for rows.Next() {
+		var unread int
+		f, err := scanFeed(unreadTailScanner{rows: rows, unread: &unread})
+		if err != nil {
+			return nil, fmt.Errorf("feeds.ListWithUnreadCounts: %w", err)
+		}
+		out = append(out, FeedWithUnreadCount{Feed: *f, UnreadCount: unread})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("feeds.ListWithUnreadCounts: %w", err)
+	}
+	return out, nil
+}
+
+// unreadTailScanner adapts an *sql.Rows so scanFeed (which expects feedColumns
+// in order) can be reused on a row that has one extra trailing unread_count
+// column. It appends &unread to the Scan dest list.
+type unreadTailScanner struct {
+	rows   *sql.Rows
+	unread *int
+}
+
+func (s unreadTailScanner) Scan(dest ...any) error {
+	return s.rows.Scan(append(dest, s.unread)...)
 }
 
 func (r *feedRepo) Get(ctx context.Context, id int64) (*model.Feed, error) {
