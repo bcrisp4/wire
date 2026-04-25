@@ -37,16 +37,20 @@ RUN go build \
 
 # Stage 4 — minimal runtime.
 FROM alpine:3.19
-RUN apk add --no-cache ca-certificates sqlite-libs tini && \
+# libgcc is needed by the Honker cdylib at runtime (libgcc_s.so.1).
+# tini is the PID 1 init for clean signal handling.
+RUN apk add --no-cache ca-certificates sqlite-libs libgcc tini && \
     addgroup -S wire && adduser -S wire -G wire && \
     mkdir -p /data /usr/local/lib && chown -R wire:wire /data
 WORKDIR /data
 COPY --from=build /out/wire /usr/local/bin/wire
 COPY --from=honker-ext /src/target/release/libhonker_ext.so /usr/local/lib/libhonker_ext.so
 USER wire
+# WIRE_HONKER_EXTENSION_PATH omits the `.so` suffix — SQLite's load_extension()
+# appends the platform extension itself.
 ENV WIRE_DB_PATH=/data/wire.db \
     WIRE_LISTEN=:8080 \
-    WIRE_HONKER_EXTENSION_PATH=/usr/local/lib/libhonker_ext.so
+    WIRE_HONKER_EXTENSION_PATH=/usr/local/lib/libhonker_ext
 EXPOSE 8080
 VOLUME ["/data"]
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/wire"]

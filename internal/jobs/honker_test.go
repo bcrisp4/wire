@@ -12,23 +12,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// requireExtension skips the test if WIRE_HONKER_EXTENSION_PATH points to a missing file.
-// This keeps the suite runnable on machines where the Rust extension hasn't been built.
+// requireExtension skips the test if no Honker extension cdylib is available.
+// honker-go expects the path WITHOUT the `.so`/`.dylib` suffix (SQLite appends it),
+// but for the existence check we have to look for the file with the suffix.
 func requireExtension(t *testing.T) string {
 	t.Helper()
-	path := os.Getenv("WIRE_HONKER_EXTENSION_PATH")
-	if path == "" {
-		// Look for the dev-build path relative to the package.
-		path = "../../build/libhonker_ext.so"
+	envPath := os.Getenv("WIRE_HONKER_EXTENSION_PATH")
+	candidate := envPath
+	if candidate == "" {
+		candidate = "../../build/libhonker_ext"
 	}
-	abs, err := filepath.Abs(path)
-	if err == nil {
-		path = abs
+	if abs, err := filepath.Abs(candidate); err == nil {
+		candidate = abs
 	}
-	if _, err := os.Stat(path); err != nil {
-		t.Skipf("Honker extension not found at %s (run 'make extension'); skipping integration test", path)
+	for _, suffix := range []string{".so", ".dylib"} {
+		if _, err := os.Stat(candidate + suffix); err == nil {
+			return candidate
+		}
 	}
-	return path
+	t.Skipf("Honker extension not found near %s (run 'make extension'); skipping integration test", candidate)
+	return ""
 }
 
 func TestHonker_RoundTrip(t *testing.T) {
