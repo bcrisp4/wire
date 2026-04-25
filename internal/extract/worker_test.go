@@ -66,6 +66,9 @@ func runWorkerForOneJob(t *testing.T, deps extract.Deps, jobID int64) {
 }
 
 func TestRunWorker_ExtractsAndUpdatesEntry(t *testing.T) {
+	// httptest binds to 127.0.0.1, which the SSRF guard rejects in production.
+	defer extract.SetValidateURLForTest(func(string) error { return nil })()
+
 	// HTTP server that serves the article HTML.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -121,8 +124,8 @@ func TestRunWorker_FetchErrorIsAcked(t *testing.T) {
 	require.NoError(t, err)
 
 	deps := extract.Deps{
-		Queue:  q,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Queue:      q,
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		HTTPClient: &http.Client{Timeout: 100 * time.Millisecond},
 		EntryFetcher: func(ctx context.Context, id int64) (string, string, error) {
 			url, rules, _ := store.get(id)
@@ -195,4 +198,3 @@ func (s *memEntryStore) snapshot(id int64) memEntry {
 	}
 	return memEntry{}
 }
-

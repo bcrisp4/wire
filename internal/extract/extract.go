@@ -55,7 +55,7 @@ func Extract(ctx context.Context, pageURL, rawHTML, customRules string) (*Result
 	}
 	if rule != "" {
 		if content, ok := extractByRule(rawHTML, rule); ok {
-			return finalize(pageURL, content, ""), nil
+			return finalize(pageURL, content, "")
 		}
 		// If the rule selector matched nothing, fall through to readability
 		// rather than returning empty content.
@@ -71,7 +71,7 @@ func Extract(ctx context.Context, pageURL, rawHTML, customRules string) (*Result
 		return nil, fmt.Errorf("extract: readability produced empty content")
 	}
 
-	return finalize(pageURL, article.Content, article.Image), nil
+	return finalize(pageURL, article.Content, article.Image)
 }
 
 // extractByRule matches selector against rawHTML and returns the concatenated
@@ -99,24 +99,31 @@ func extractByRule(rawHTML, selector string) (string, bool) {
 }
 
 // predefinedRule returns the CSS selector registered for pageURL's host
-// (sans leading "www."), or "" if none is defined.
+// (sans leading "www."), or "" if none is defined. Uses Hostname() so a port
+// suffix in the URL doesn't cause the lookup to miss.
 func predefinedRule(pageURL string) string {
 	parsed, err := url.Parse(pageURL)
-	if err != nil || parsed.Host == "" {
+	if err != nil || parsed.Hostname() == "" {
 		return ""
 	}
-	host := strings.TrimPrefix(parsed.Host, "www.")
+	host := strings.TrimPrefix(parsed.Hostname(), "www.")
 	return predefinedRules[host]
 }
 
 // finalize sanitizes content against pageURL and computes reading time.
-func finalize(pageURL, content, image string) *Result {
+// Returns an error when SanitizeHTML produces empty output for non-empty
+// input — that signals a sanitizer parse failure or depth-cap hit, and we
+// don't want to silently overwrite a feed-provided summary with "".
+func finalize(pageURL, content, image string) (*Result, error) {
 	clean := SanitizeHTML(pageURL, content, &SanitizerOptions{OpenLinksInNewTab: true})
+	if clean == "" && strings.TrimSpace(content) != "" {
+		return nil, fmt.Errorf("extract: sanitizer produced empty output")
+	}
 	return &Result{
 		Content:     clean,
 		ReadingTime: readingTime(clean),
 		Image:       image,
-	}
+	}, nil
 }
 
 // readingTime returns ceil(wordCount/250), with a minimum of 1 minute.
