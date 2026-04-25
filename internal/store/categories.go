@@ -43,6 +43,41 @@ func (r *categoryRepo) List(ctx context.Context, userID int64) ([]model.Category
 	return out, nil
 }
 
+// ListWithUnreadCounts returns all categories for userID with the count of
+// unread entries across feeds in each category. Categories with no feeds (or
+// no unread entries) report UnreadCount = 0 thanks to LEFT JOIN + COALESCE.
+// One round trip; no N+1.
+func (r *categoryRepo) ListWithUnreadCounts(ctx context.Context, userID int64) ([]CategoryWithUnreadCount, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT categories.id, categories.user_id, categories.name,
+		        COALESCE(SUM(CASE WHEN entries.read = 0 THEN 1 ELSE 0 END), 0) AS unread_count
+		   FROM categories
+		   LEFT JOIN feeds   ON feeds.category_id = categories.id
+		   LEFT JOIN entries ON entries.feed_id   = feeds.id
+		  WHERE categories.user_id = ?
+		  GROUP BY categories.id
+		  ORDER BY categories.name`,
+		userID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("categories: list with unread: %w", err)
+	}
+	defer rows.Close()
+
+	var out []CategoryWithUnreadCount
+	for rows.Next() {
+		var c CategoryWithUnreadCount
+		if err := rows.Scan(&c.ID, &c.UserID, &c.Name, &c.UnreadCount); err != nil {
+			return nil, fmt.Errorf("categories: scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("categories: list with unread rows: %w", err)
+	}
+	return out, nil
+}
+
 func (r *categoryRepo) Create(ctx context.Context, c *model.Category) error {
 	res, err := r.db.ExecContext(ctx,
 		`INSERT INTO categories(user_id, name) VALUES (?, ?)`,

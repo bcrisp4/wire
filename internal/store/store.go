@@ -26,18 +26,35 @@ type UserRepo interface {
 
 type CategoryRepo interface {
 	List(ctx context.Context, userID int64) ([]model.Category, error)
+	ListWithUnreadCounts(ctx context.Context, userID int64) ([]CategoryWithUnreadCount, error)
 	Create(ctx context.Context, c *model.Category) error
 	Rename(ctx context.Context, id int64, name string) error
 	Delete(ctx context.Context, id int64) error
 }
 
+// CategoryWithUnreadCount pairs a Category with the count of unread entries
+// across all feeds in that category. Used by the categories list endpoint to
+// drive sidebar unread badges in the SPA.
+type CategoryWithUnreadCount struct {
+	model.Category
+	UnreadCount int
+}
+
 type FeedRepo interface {
 	List(ctx context.Context, userID int64) ([]model.Feed, error)
+	ListWithUnreadCounts(ctx context.Context, userID int64) ([]FeedWithUnreadCount, error)
 	Get(ctx context.Context, id int64) (*model.Feed, error)
 	Create(ctx context.Context, f *model.Feed) error
 	Update(ctx context.Context, f *model.Feed) error
 	Delete(ctx context.Context, id int64) error
 	DueForPolling(ctx context.Context, now int64, limit int) ([]model.Feed, error)
+}
+
+// FeedWithUnreadCount pairs a Feed with the count of its unread entries.
+// Used by the feeds list endpoint to drive sidebar unread badges in the SPA.
+type FeedWithUnreadCount struct {
+	model.Feed
+	UnreadCount int
 }
 
 type EntryRepo interface {

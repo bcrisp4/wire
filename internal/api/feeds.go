@@ -43,6 +43,9 @@ type feedJSON struct {
 	IgnoreEntryUpdates bool    `json:"ignore_entry_updates"`
 	CreatedAt          int64   `json:"created_at"`
 	UpdatedAt          int64   `json:"updated_at"`
+	// Populated by the list endpoint only; single-resource endpoints leave it
+	// at zero pending Phase 1c.
+	UnreadCount int `json:"unread_count"`
 }
 
 func toFeedJSON(f *model.Feed) feedJSON {
@@ -79,14 +82,16 @@ func (s *Server) registerFeedRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) handleFeedsList(w http.ResponseWriter, r *http.Request) {
-	feeds, err := s.opts.Store.Feeds().List(r.Context(), defaultUserID)
+	feeds, err := s.opts.Store.Feeds().ListWithUnreadCounts(r.Context(), defaultUserID)
 	if err != nil {
 		s.serverError(w, r, "feeds.list", err)
 		return
 	}
 	out := make([]feedJSON, 0, len(feeds))
 	for i := range feeds {
-		out = append(out, toFeedJSON(&feeds[i]))
+		j := toFeedJSON(&feeds[i].Feed)
+		j.UnreadCount = feeds[i].UnreadCount
+		out = append(out, j)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

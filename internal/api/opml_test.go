@@ -71,6 +71,17 @@ func (c *fakeCats) Create(_ context.Context, m *model.Category) error {
 	c.s.cats = append(c.s.cats, *m)
 	return nil
 }
+func (c *fakeCats) ListWithUnreadCounts(ctx context.Context, userID int64) ([]store.CategoryWithUnreadCount, error) {
+	cats, err := c.List(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]store.CategoryWithUnreadCount, 0, len(cats))
+	for _, cat := range cats {
+		out = append(out, store.CategoryWithUnreadCount{Category: cat})
+	}
+	return out, nil
+}
 func (c *fakeCats) Rename(context.Context, int64, string) error { return errors.New("not used") }
 func (c *fakeCats) Delete(context.Context, int64) error         { return errors.New("not used") }
 
@@ -102,6 +113,17 @@ func (f *fakeFeeds) Create(_ context.Context, m *model.Feed) error {
 	f.s.nextFeedID++
 	f.s.feeds = append(f.s.feeds, *m)
 	return nil
+}
+func (f *fakeFeeds) ListWithUnreadCounts(ctx context.Context, userID int64) ([]store.FeedWithUnreadCount, error) {
+	feeds, err := f.List(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]store.FeedWithUnreadCount, 0, len(feeds))
+	for _, fd := range feeds {
+		out = append(out, store.FeedWithUnreadCount{Feed: fd})
+	}
+	return out, nil
 }
 func (f *fakeFeeds) Update(context.Context, *model.Feed) error { return errors.New("not used") }
 func (f *fakeFeeds) Delete(context.Context, int64) error       { return errors.New("not used") }
@@ -287,6 +309,9 @@ type errConflictCats struct{ base *fakeCats }
 func (c *errConflictCats) List(ctx context.Context, userID int64) ([]model.Category, error) {
 	return c.base.List(ctx, userID)
 }
+func (c *errConflictCats) ListWithUnreadCounts(ctx context.Context, userID int64) ([]store.CategoryWithUnreadCount, error) {
+	return c.base.ListWithUnreadCounts(ctx, userID)
+}
 func (c *errConflictCats) Create(ctx context.Context, m *model.Category) error {
 	if err := c.base.Create(ctx, m); err != nil {
 		return fmt.Errorf("create category: %w", store.ErrConflict)
@@ -302,6 +327,9 @@ type errConflictFeeds struct{ base *fakeFeeds }
 
 func (f *errConflictFeeds) List(ctx context.Context, userID int64) ([]model.Feed, error) {
 	return f.base.List(ctx, userID)
+}
+func (f *errConflictFeeds) ListWithUnreadCounts(ctx context.Context, userID int64) ([]store.FeedWithUnreadCount, error) {
+	return f.base.ListWithUnreadCounts(ctx, userID)
 }
 func (f *errConflictFeeds) Get(ctx context.Context, id int64) (*model.Feed, error) {
 	return f.base.Get(ctx, id)

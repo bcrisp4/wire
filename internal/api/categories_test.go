@@ -200,6 +200,60 @@ func TestCategories_DeleteMissingReturns404(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
+// TestCategories_ListIncludesUnreadCount asserts GET /api/v1/categories
+// surfaces unread_count from the LEFT JOIN aggregate. Categories with no feeds
+// or no unread entries must report 0, not be omitted.
+func TestCategories_ListIncludesUnreadCount(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "wire.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(t, store.Migrate(context.Background(), db))
+
+	srv, err := NewServer(Options{
+		Listen: "127.0.0.1:0",
+		Logger: slogDiscard(),
+		Store:  store.New(db),
+	})
+	require.NoError(t, err)
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	// Two categories: News (will get a feed + 2 unread + 1 read), Empty (no feeds).
+	news := mustCreateCategory(t, ts, "News")
+	mustCreateCategory(t, ts, "Empty")
+
+	// Insert a feed in News and a few entries directly via the DB.
+	res, err := db.ExecContext(context.Background(),
+		`INSERT INTO feeds(user_id, category_id, title, feed_url, poll_interval)
+		 VALUES (1, ?, 't', 'https://t/rss', 3600)`, news)
+	require.NoError(t, err)
+	feedID, err := res.LastInsertId()
+	require.NoError(t, err)
+	_, err = db.ExecContext(context.Background(),
+		`INSERT INTO entries(feed_id, user_id, hash, title, read) VALUES
+		 (?, 1, 'h1', 'x', 0), (?, 1, 'h2', 'x', 0), (?, 1, 'h3', 'x', 1)`,
+		feedID, feedID, feedID,
+	)
+	require.NoError(t, err)
+
+	resp, err := http.Get(ts.URL + "/api/v1/categories")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var got []map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&got))
+	require.Len(t, got, 2)
+
+	byName := map[string]float64{}
+	for _, c := range got {
+		require.Contains(t, c, "unread_count")
+		byName[c["name"].(string)] = c["unread_count"].(float64)
+	}
+	assert.Equal(t, float64(2), byName["News"])
+	assert.Equal(t, float64(0), byName["Empty"])
+}
+
 func mustCreateCategory(t *testing.T, ts *httptest.Server, name string) int64 {
 	t.Helper()
 	resp, err := http.Post(ts.URL+"/api/v1/categories", "application/json",

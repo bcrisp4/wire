@@ -19,6 +19,9 @@ const defaultUserID int64 = 1
 type categoryDTO struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
+	// Populated by the list endpoint only; write endpoints leave it at zero
+	// pending Phase 1c.
+	UnreadCount int `json:"unread_count"`
 }
 
 type categoryWriteReq struct {
@@ -35,7 +38,7 @@ func registerCategoryRoutes(mux *http.ServeMux, repo store.CategoryRepo, logger 
 func categoriesList(repo store.CategoryRepo, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID := defaultUserID
-		cats, err := repo.List(r.Context(), userID)
+		cats, err := repo.ListWithUnreadCounts(r.Context(), userID)
 		if err != nil {
 			logger.Error("categories.list", "err", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -43,7 +46,7 @@ func categoriesList(repo store.CategoryRepo, logger *slog.Logger) http.Handler {
 		}
 		out := make([]categoryDTO, 0, len(cats))
 		for _, c := range cats {
-			out = append(out, categoryDTO{ID: c.ID, Name: c.Name})
+			out = append(out, categoryDTO{ID: c.ID, Name: c.Name, UnreadCount: c.UnreadCount})
 		}
 		writeJSON(w, http.StatusOK, out)
 	})
