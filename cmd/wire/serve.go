@@ -8,6 +8,7 @@ import (
 
 	"github.com/bcrisp4/wire/internal/api"
 	"github.com/bcrisp4/wire/internal/config"
+	"github.com/bcrisp4/wire/internal/feedpoll"
 	"github.com/bcrisp4/wire/internal/jobs"
 	"github.com/bcrisp4/wire/internal/logger"
 	"github.com/bcrisp4/wire/internal/store"
@@ -38,15 +39,19 @@ func serve(ctx context.Context) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
-	// Heartbeat keeps the scheduler exercised so Phase 1 workers can register against
-	// a known-working scheduler without bootstrapping it themselves.
+	// Unit 4: feed.poll cron replaces the Phase 0 wire.heartbeat canary.
+	// The cron tick uses feedpoll.TickPayload so the worker (wired below
+	// once sibling units land) can distinguish dispatcher ticks from
+	// per-feed poll jobs and call EnqueueDue to fan out.
 	if err := hb.Scheduler().Schedule(jobs.ScheduledTask{
-		Name:  jobs.QueueHeartbeat,
-		Cron:  "* * * * *",
-		Queue: jobs.QueueHeartbeat,
+		Name:    jobs.QueueFeedPoll,
+		Cron:    "* * * * *",
+		Queue:   jobs.QueueFeedPoll,
+		Payload: feedpoll.TickPayload(),
 	}); err != nil {
-		return fmt.Errorf("schedule heartbeat: %w", err)
+		return fmt.Errorf("schedule feed.poll: %w", err)
 	}
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -55,6 +60,12 @@ func serve(ctx context.Context) error {
 			log.Error("scheduler exited", "err", err)
 		}
 	}()
+
+	// TODO(unit-0/1/2): wire feedpoll.RunWorker once store.New, feedparse, and
+	// feedfetch land. feedpoll.Deps takes locally-defined interfaces so the
+	// store/parser/fetcher impls satisfy them structurally. The cron above
+	// fires a job on QueueFeedPoll; the worker calls feedpoll.EnqueueDue to
+	// fan it out into per-feed jobs.
 
 	spaFS, err := web.FS()
 	if err != nil {
