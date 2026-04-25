@@ -1,12 +1,15 @@
 <script lang="ts">
 	import '../app.css';
+	import { onMount } from 'svelte';
 	import { navItems } from '$lib/nav';
-	import { handleKeydown } from '$lib/shortcuts';
+	import { registerServiceWorker } from '$lib/sw-register';
 
 	let { children } = $props();
-</script>
 
-<svelte:window onkeydown={handleKeydown} />
+	onMount(() => {
+		registerServiceWorker();
+	});
+</script>
 
 <div class="shell">
 	<aside class="sidebar">
