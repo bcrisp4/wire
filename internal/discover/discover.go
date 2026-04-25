@@ -63,6 +63,19 @@ var errBlockedAddress = errors.New("address not allowed")
 // errBlockedScheme is returned for URLs whose scheme is not http or https.
 var errBlockedScheme = errors.New("scheme not allowed")
 
+// errInvalidURL wraps URL parse failures and missing-host cases. Callers can
+// test for it with errors.Is to distinguish bad input from upstream failures.
+var errInvalidURL = errors.New("invalid URL")
+
+// IsValidationError reports whether err originated from input validation
+// (bad scheme, blocked address, malformed URL) rather than a transport or
+// upstream failure. The HTTP layer uses this to pick 400 vs 502.
+func IsValidationError(err error) bool {
+	return errors.Is(err, errBlockedScheme) ||
+		errors.Is(err, errBlockedAddress) ||
+		errors.Is(err, errInvalidURL)
+}
+
 // Candidate is a single feed URL discovered for a page.
 type Candidate struct {
 	URL   string
@@ -314,6 +327,13 @@ func candidateFromLink(n *html.Node, base *url.URL) (Candidate, bool) {
 	if !ok {
 		return Candidate{}, false
 	}
+	// Generic XML types in <link type="..."> are too ambiguous to surface as
+	// "xml" candidates: API consumers expect "rss" or "atom". For direct-feed
+	// detection we resolve "xml" by sniffing the response body, but here we
+	// only have a type attribute to go on, so reject it.
+	if feedType != "rss" && feedType != "atom" {
+		return Candidate{}, false
+	}
 	if href == "" {
 		return Candidate{}, false
 	}
@@ -404,7 +424,7 @@ var validateURLFn = validateURL
 func validateURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid URL: %w", err)
+		return fmt.Errorf("%w: %v", errInvalidURL, err)
 	}
 	switch strings.ToLower(u.Scheme) {
 	case "http", "https":
@@ -413,7 +433,7 @@ func validateURL(rawURL string) error {
 	}
 	host := u.Hostname()
 	if host == "" {
-		return fmt.Errorf("invalid URL: missing host")
+		return fmt.Errorf("%w: missing host", errInvalidURL)
 	}
 	// Fast-path literal IPs.
 	if ip := net.ParseIP(host); ip != nil {

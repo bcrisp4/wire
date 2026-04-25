@@ -82,6 +82,23 @@ func TestDiscoverHandler_ValidURLReturnsCandidates(t *testing.T) {
 	assert.Equal(t, "rss", got.Candidates[0].Type)
 }
 
+// TestDiscoverHandler_ValidationErrorReturns400 confirms that a syntactically
+// valid JSON body whose URL fails the discover guard (bad scheme, blocked
+// host) is rejected with 400 rather than 502, so clients can distinguish bad
+// input from upstream failures. The production guard is in effect here — no
+// stub — because the URL never reaches the network.
+func TestDiscoverHandler_ValidationErrorReturns400(t *testing.T) {
+	h := discoverHandler(http.DefaultClient)
+
+	r := httptest.NewRequest("POST", "/api/v1/feeds/discover",
+		strings.NewReader(`{"url":"file:///etc/passwd"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 // TestDiscoverHandler_NoCandidatesReturnsEmptyArray ensures the response shape
 // is stable (an array, not null) when nothing is found.
 func TestDiscoverHandler_NoCandidatesReturnsEmptyArray(t *testing.T) {

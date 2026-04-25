@@ -46,9 +46,13 @@ func discoverHandler(client *http.Client) http.Handler {
 		cands, err := discover.Discover(r.Context(), client, req.URL)
 		if err != nil {
 			// Don't leak resolved IPs, internal hostnames, or transport
-			// error detail to the client. The error is wrapped with
-			// "discover:" by the package; we treat anything from there
-			// as a generic upstream/validation failure.
+			// detail. Validation failures (bad scheme, blocked address,
+			// malformed URL) are 400 so the client knows to fix its input;
+			// everything else is treated as an upstream/transport failure.
+			if discover.IsValidationError(err) {
+				http.Error(w, "invalid url", http.StatusBadRequest)
+				return
+			}
 			http.Error(w, "discovery failed", http.StatusBadGateway)
 			return
 		}

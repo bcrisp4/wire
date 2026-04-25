@@ -56,7 +56,7 @@ func TestDiscover_FindsTwoLinkAlternates(t *testing.T) {
 }
 
 // TestDiscover_FallsBackToWellKnownPaths confirms that when the HTML has no
-// link rel=alternate tags, well-known feed paths are probed (HEAD/GET) and any
+// link rel=alternate tags, well-known feed paths are probed with GET and any
 // that return a feed-ish content type are returned.
 func TestDiscover_FallsBackToWellKnownPaths(t *testing.T) {
 	mux := http.NewServeMux()
@@ -253,6 +253,44 @@ func TestValidateURL(t *testing.T) {
 		defer func() { lookupHostFn = prev }()
 		assert.ErrorIs(t, validateURL("http://internal.example/"), errBlockedAddress)
 	})
+}
+
+// TestDiscover_HTMLLinkGenericXMLRejected ensures an HTML
+// <link rel="alternate" type="application/xml"> is not surfaced as an "xml"
+// candidate — autodiscovery is required to declare rss or atom explicitly,
+// since we have no body to confirm the type for an unfetched href.
+func TestDiscover_HTMLLinkGenericXMLRejected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<!doctype html><html><head>
+<link rel="alternate" type="application/xml" href="/maybe-feed.xml" title="Ambiguous">
+</head><body></body></html>`))
+	}))
+	defer srv.Close()
+
+	got, err := Discover(context.Background(), srv.Client(), srv.URL+"/")
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TestIsValidationError confirms the helper recognizes the validation
+// sentinels (and their wrapped forms) without matching transport errors.
+func TestIsValidationError(t *testing.T) {
+	prev := validateURLFn
+	validateURLFn = validateURL
+	defer func() { validateURLFn = prev }()
+
+	_, err := Discover(context.Background(), http.DefaultClient, "file:///etc/passwd")
+	require.Error(t, err)
+	assert.True(t, IsValidationError(err))
+
+	_, err = Discover(context.Background(), http.DefaultClient, "http://127.0.0.1/")
+	require.Error(t, err)
+	assert.True(t, IsValidationError(err))
+
+	_, err = Discover(context.Background(), http.DefaultClient, "http:// bad host")
+	require.Error(t, err)
+	assert.True(t, IsValidationError(err))
 }
 
 // TestDiscover_DedupesIdenticalCandidates confirms the same feed URL appearing
