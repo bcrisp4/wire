@@ -168,6 +168,9 @@ func importSubscriptions(ctx context.Context, st store.Store, subs []opml.Subscr
 		if feedURL == "" {
 			continue
 		}
+		// Per-iteration copy: every Feed gets its own *int64 so later
+		// mutations through one feed's pointer can't alias another's.
+		nextPoll := now
 		categoryName := strings.TrimSpace(s.Category)
 		var categoryID *int64
 		if categoryName != "" {
@@ -214,7 +217,7 @@ func importSubscriptions(ctx context.Context, st store.Store, subs []opml.Subscr
 			FeedURL:      feedURL,
 			SiteURL:      stringPtr(strings.TrimSpace(s.SiteURL)),
 			PollInterval: 3600,
-			NextPollAt:   &now,
+			NextPollAt:   &nextPoll,
 			Crawler:      false,
 		}
 		if err := st.Feeds().Create(ctx, feed); err != nil {
