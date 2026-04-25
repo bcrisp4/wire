@@ -7,11 +7,28 @@
 		loading: boolean;
 		hasMore: boolean;
 		onLoadMore?: () => void;
+		onexpand?: (entry: Entry) => void;
+		onmarkread?: (entry: Entry) => void;
+		ontogglesaved?: (entry: Entry) => void;
 	};
 
-	let { entries, loading, hasMore, onLoadMore }: Props = $props();
+	let {
+		entries,
+		loading,
+		hasMore,
+		onLoadMore,
+		onexpand,
+		onmarkread,
+		ontogglesaved
+	}: Props = $props();
 
 	let expandedID = $state<number | null>(null);
+
+	function toggle(entry: Entry) {
+		const willExpand = expandedID !== entry.id;
+		expandedID = willExpand ? entry.id : null;
+		if (willExpand) onexpand?.(entry);
+	}
 
 	// `IntersectionObserver` is wired via an attachment so the observer is
 	// torn down when the sentinel unmounts (e.g. when `hasMore` becomes false).
@@ -36,7 +53,9 @@
 		<EntryCard
 			{entry}
 			expanded={expandedID === entry.id}
-			ontoggle={() => (expandedID = expandedID === entry.id ? null : entry.id)}
+			ontoggle={() => toggle(entry)}
+			onmarkread={() => onmarkread?.(entry)}
+			ontogglesaved={() => ontogglesaved?.(entry)}
 		/>
 	{/each}
 

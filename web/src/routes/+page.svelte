@@ -1,55 +1,104 @@
 <script lang="ts">
-	let { data } = $props();
+	import { untrack } from 'svelte';
+	import EntryList from '$lib/components/EntryList.svelte';
+	import { api } from '$lib/api';
+	import type { Entry, EntryListResponse } from '$lib/types';
+	import type { PageProps } from './$types';
+	import { PAGE_SIZE } from './+page';
+
+	let { data }: PageProps = $props();
+
+	let entries = $state<Entry[]>(untrack(() => data.initial.entries.slice()));
+	let total = $state(untrack(() => data.initial.total));
+	let nextOffset = $state(
+		untrack(() => data.initial.offset + data.initial.entries.length)
+	);
+	let loading = $state(false);
+
+	let hasMore = $derived(nextOffset < total);
+
+	// Per-entry generation counter so a stale rollback can't clobber a newer
+	// successful change when two updates overlap.
+	const updateGen = new Map<number, number>();
+
+	async function loadMore() {
+		if (loading || !hasMore) return;
+		loading = true;
+		try {
+			const res = await api.get<EntryListResponse>(
+				`/entries?status=unread&limit=${PAGE_SIZE}&offset=${nextOffset}`
+			);
+			entries = [...entries, ...res.entries];
+			total = res.total;
+			nextOffset += res.entries.length;
+		} catch (e) {
+			console.error('loadMore failed', e);
+		} finally {
+			loading = false;
+		}
+	}
+
+	async function update(entry: Entry, patch: { read?: boolean; saved?: boolean }) {
+		const before = { read: entry.read, saved: entry.saved };
+		const gen = (updateGen.get(entry.id) ?? 0) + 1;
+		updateGen.set(entry.id, gen);
+		Object.assign(entry, patch);
+		try {
+			const updated = await api.put<Entry>(`/entries/${entry.id}`, patch);
+			if (updateGen.get(entry.id) === gen) {
+				Object.assign(entry, updated);
+			}
+		} catch (e) {
+			if (updateGen.get(entry.id) === gen) {
+				Object.assign(entry, before);
+			}
+			console.error('entry update failed', e);
+		}
+	}
+
+	function markRead(entry: Entry) {
+		if (!entry.read) update(entry, { read: true });
+	}
+	const toggleRead = (entry: Entry) => update(entry, { read: !entry.read });
+	const toggleSaved = (entry: Entry) => update(entry, { saved: !entry.saved });
 </script>
 
-<main>
+<section class="river">
 	<header>
-		<h1>Wire</h1>
-		<p class="muted">A self-hosted feed reader.</p>
+		<h1>River</h1>
+		<p class="muted">{total} unread</p>
 	</header>
 
-	<section class="card">
-		<h2>Foundation health</h2>
-		<p>API status: <code>{data.status}</code></p>
-		<p class="muted">Phase 0 foundation. Feed reading, search, and offline lands in Phase 1.</p>
-	</section>
-</main>
+	<EntryList
+		{entries}
+		{loading}
+		{hasMore}
+		onLoadMore={loadMore}
+		onexpand={markRead}
+		onmarkread={toggleRead}
+		ontogglesaved={toggleSaved}
+	/>
+</section>
 
 <style>
-	main {
-		max-width: 40rem;
-		margin: 4rem auto;
+	.river {
+		max-width: 48rem;
+		margin: 2rem auto;
 		padding: 0 1rem;
 	}
-	header h1 {
-		margin: 0 0 0.25rem;
-		font-size: 2rem;
-		letter-spacing: -0.02em;
+	header {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		margin-bottom: 1rem;
+	}
+	h1 {
+		margin: 0;
+		font-size: 1.5rem;
 	}
 	.muted {
 		color: var(--fg-muted);
 		margin: 0;
-	}
-	.card {
-		margin-top: 2rem;
-		padding: 1.25rem 1.5rem;
-		background: var(--surface);
-		border: 1px solid var(--border);
-		border-radius: 8px;
-	}
-	.card h2 {
-		margin: 0 0 0.75rem;
-		font-size: 1rem;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: var(--fg-muted);
-	}
-	code {
-		background: var(--bg);
-		padding: 0.1em 0.4em;
-		border-radius: 3px;
-		border: 1px solid var(--border);
-		font-size: 0.9em;
+		font-size: 0.9rem;
 	}
 </style>
