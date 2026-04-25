@@ -8,24 +8,17 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 )
 
 // ErrNoJob is returned by Queue.Claim when no job is available.
 var ErrNoJob = errors.New("jobs: no job available")
 
-type Job struct {
-	ID      int64
-	Queue   string
-	Payload []byte
-}
-
 // Queue is the durable job queue contract.
 type Queue interface {
-	Enqueue(ctx context.Context, j Job) error
-	Claim(ctx context.Context, queue string) (Job, error) // returns ErrNoJob on empty
-	Ack(ctx context.Context, jobID int64) error
-	Fail(ctx context.Context, jobID int64, errMsg string, retryAfterSec int) error
+	Enqueue(ctx context.Context, queue string, payload json.RawMessage) (int64, error)
+	Claim(ctx context.Context, queue, workerID string) (*Job, error) // returns ErrNoJob on empty
 	Close() error
 }
 
@@ -35,10 +28,42 @@ type Scheduler interface {
 	Run(ctx context.Context) error // blocks until ctx canceled
 }
 
-// ScheduledTask defines a recurring enqueue.
+// ScheduledTask is a recurring enqueue.
 type ScheduledTask struct {
-	Name    string // unique identifier
-	Cron    string // 5-field cron expression
-	Queue   string // queue to enqueue into when fired
-	Payload []byte
+	Name    string          // unique identifier
+	Cron    string          // 5-field cron expression
+	Queue   string          // queue to enqueue into when fired
+	Payload json.RawMessage // payload attached to enqueued jobs
+}
+
+// Job is a unit of work returned by Queue.Claim.
+//
+// Ack and Fail delegate to backend-specific closures bound at claim time.
+// On the in-process MemoryQueue they are no-ops; on the Honker backend they
+// call honker.Job.Ack / Retry on the underlying claimed row.
+type Job struct {
+	ID       int64
+	Queue    string
+	Payload  json.RawMessage
+	Attempts int64
+
+	ack  func(context.Context) error
+	fail func(context.Context, string, int) error
+}
+
+// Ack acknowledges the job as successfully processed.
+func (j *Job) Ack(ctx context.Context) error {
+	if j == nil || j.ack == nil {
+		return nil
+	}
+	return j.ack(ctx)
+}
+
+// Fail marks the job as failed and schedules a retry after retryAfterSec
+// (or moves it to the dead-letter queue if it has hit MaxAttempts).
+func (j *Job) Fail(ctx context.Context, errMsg string, retryAfterSec int) error {
+	if j == nil || j.fail == nil {
+		return nil
+	}
+	return j.fail(ctx, errMsg, retryAfterSec)
 }
