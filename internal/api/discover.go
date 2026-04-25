@@ -30,8 +30,11 @@ type discoverResponse struct {
 // HTTP fetching to the supplied client so tests can inject httptest servers.
 func discoverHandler(client *http.Client) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The request body is a small JSON object; cap it to avoid
+		// unbounded reads. 4 KiB is plenty for any reasonable URL.
+		body := http.MaxBytesReader(w, r.Body, 4*1024)
 		var req discoverRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if err := json.NewDecoder(body).Decode(&req); err != nil {
 			http.Error(w, "invalid JSON body", http.StatusBadRequest)
 			return
 		}
@@ -42,7 +45,11 @@ func discoverHandler(client *http.Client) http.Handler {
 
 		cands, err := discover.Discover(r.Context(), client, req.URL)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
+			// Don't leak resolved IPs, internal hostnames, or transport
+			// error detail to the client. The error is wrapped with
+			// "discover:" by the package; we treat anything from there
+			// as a generic upstream/validation failure.
+			http.Error(w, "discovery failed", http.StatusBadGateway)
 			return
 		}
 

@@ -2,14 +2,27 @@ package discover
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMain installs a permissive URL guard so the discover tests can talk
+// to httptest servers (which bind to 127.0.0.1). The production guard
+// rejects loopback addresses by design. The validation logic itself is
+// covered separately in TestValidateURL_*.
+func TestMain(m *testing.M) {
+	restore := SetValidateURLForTest(func(string) error { return nil })
+	code := m.Run()
+	restore()
+	os.Exit(code)
+}
 
 // TestDiscover_FindsTwoLinkAlternates verifies that two <link rel="alternate">
 // tags are returned in document order, with their type and title preserved.
@@ -122,10 +135,15 @@ func TestDiscover_RelativeHrefIsResolved(t *testing.T) {
 }
 
 // TestDiscover_NetworkErrorWrapped confirms that connection errors surface as
-// wrapped errors with the "discover:" prefix.
+// wrapped errors with the "discover:" prefix. We start a real httptest
+// server, capture its URL, then close it so the next request reliably fails
+// with a connection refused — more deterministic than a hard-coded port.
 func TestDiscover_NetworkErrorWrapped(t *testing.T) {
-	// 127.0.0.1:1 is reliably unreachable for unprivileged users.
-	_, err := Discover(context.Background(), http.DefaultClient, "http://127.0.0.1:1/")
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL + "/"
+	srv.Close()
+
+	_, err := Discover(context.Background(), http.DefaultClient, url)
 	require.Error(t, err)
 	assert.True(t, strings.HasPrefix(err.Error(), "discover:"),
 		"error should be wrapped with discover: prefix, got %q", err.Error())
@@ -146,6 +164,95 @@ func TestDiscover_DirectFeedURL(t *testing.T) {
 	require.Len(t, got, 1)
 	assert.Equal(t, srv.URL+"/atom", got[0].URL)
 	assert.Equal(t, "atom", got[0].Type)
+}
+
+// TestDiscover_DirectFeed_GenericXMLContentType verifies that a feed served
+// as application/xml (rather than application/rss+xml) is still recognized
+// when the body's root element confirms it. This is common in the wild.
+func TestDiscover_DirectFeed_GenericXMLContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>`))
+	}))
+	defer srv.Close()
+
+	got, err := Discover(context.Background(), srv.Client(), srv.URL+"/feed")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "rss", got[0].Type)
+}
+
+// TestDiscover_DirectFeed_TextXMLAtom covers Atom served as text/xml.
+func TestDiscover_DirectFeed_TextXMLAtom(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/xml")
+		_, _ = w.Write([]byte(`<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>`))
+	}))
+	defer srv.Close()
+
+	got, err := Discover(context.Background(), srv.Client(), srv.URL+"/atom")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "atom", got[0].Type)
+}
+
+// TestDiscover_GenericXML_NotAFeed ensures we don't classify arbitrary XML
+// as a feed when the root element isn't rss/feed/rdf.
+func TestDiscover_GenericXML_NotAFeed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "application/xml")
+			_, _ = w.Write([]byte(`<?xml version="1.0"?><sitemap></sitemap>`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	got, err := Discover(context.Background(), srv.Client(), srv.URL+"/")
+	require.NoError(t, err)
+	assert.Empty(t, got)
+}
+
+// TestValidateURL exercises the production URL guard directly (TestMain
+// stubs it for the rest of the suite). We bypass DNS by using IP literals
+// and stubbing lookupHostFn for the hostname case.
+func TestValidateURL(t *testing.T) {
+	t.Run("rejects non-http schemes", func(t *testing.T) {
+		assert.ErrorIs(t, validateURL("file:///etc/passwd"), errBlockedScheme)
+		assert.ErrorIs(t, validateURL("gopher://example.com/"), errBlockedScheme)
+	})
+	t.Run("rejects loopback IP literal", func(t *testing.T) {
+		assert.ErrorIs(t, validateURL("http://127.0.0.1/"), errBlockedAddress)
+		assert.ErrorIs(t, validateURL("http://[::1]/"), errBlockedAddress)
+	})
+	t.Run("rejects private IP literal", func(t *testing.T) {
+		assert.ErrorIs(t, validateURL("http://10.0.0.1/"), errBlockedAddress)
+		assert.ErrorIs(t, validateURL("http://192.168.1.1/"), errBlockedAddress)
+		assert.ErrorIs(t, validateURL("http://172.16.0.1/"), errBlockedAddress)
+	})
+	t.Run("rejects link-local IP literal", func(t *testing.T) {
+		assert.ErrorIs(t, validateURL("http://169.254.169.254/"), errBlockedAddress)
+	})
+	t.Run("rejects localhost name without DNS", func(t *testing.T) {
+		assert.ErrorIs(t, validateURL("http://localhost/"), errBlockedAddress)
+	})
+	t.Run("accepts public IP literal", func(t *testing.T) {
+		assert.NoError(t, validateURL("http://8.8.8.8/"))
+	})
+	t.Run("accepts hostname resolving to public IP", func(t *testing.T) {
+		prev := lookupHostFn
+		lookupHostFn = func(string) ([]net.IP, error) { return []net.IP{net.ParseIP("8.8.8.8")}, nil }
+		defer func() { lookupHostFn = prev }()
+		assert.NoError(t, validateURL("http://example.com/"))
+	})
+	t.Run("rejects hostname resolving to private IP", func(t *testing.T) {
+		prev := lookupHostFn
+		lookupHostFn = func(string) ([]net.IP, error) { return []net.IP{net.ParseIP("10.0.0.5")}, nil }
+		defer func() { lookupHostFn = prev }()
+		assert.ErrorIs(t, validateURL("http://internal.example/"), errBlockedAddress)
+	})
 }
 
 // TestDiscover_DedupesIdenticalCandidates confirms the same feed URL appearing

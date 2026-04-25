@@ -8,9 +8,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bcrisp4/wire/internal/discover"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// installPermissiveDiscoverGuard relaxes the discover SSRF guard so handler
+// tests can reach the httptest server on 127.0.0.1.
+func installPermissiveDiscoverGuard(t *testing.T) {
+	t.Helper()
+	restore := discover.SetValidateURLForTest(func(string) error { return nil })
+	t.Cleanup(restore)
+}
 
 // TestDiscoverHandler_EmptyBodyReturns400 confirms that a POST without a JSON
 // body (or without a url field) is rejected with 400.
@@ -38,6 +47,7 @@ func TestDiscoverHandler_MissingURLReturns400(t *testing.T) {
 // stand in for the target site, then confirms the handler returns the
 // discovered candidates as JSON.
 func TestDiscoverHandler_ValidURLReturnsCandidates(t *testing.T) {
+	installPermissiveDiscoverGuard(t)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte(`<!doctype html><html><head>
@@ -55,7 +65,8 @@ func TestDiscoverHandler_ValidURLReturnsCandidates(t *testing.T) {
 	h.ServeHTTP(w, r)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	raw, _ := io.ReadAll(w.Body)
+	raw, err := io.ReadAll(w.Body)
+	require.NoError(t, err)
 
 	var got struct {
 		Candidates []struct {
@@ -74,6 +85,7 @@ func TestDiscoverHandler_ValidURLReturnsCandidates(t *testing.T) {
 // TestDiscoverHandler_NoCandidatesReturnsEmptyArray ensures the response shape
 // is stable (an array, not null) when nothing is found.
 func TestDiscoverHandler_NoCandidatesReturnsEmptyArray(t *testing.T) {
+	installPermissiveDiscoverGuard(t)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
