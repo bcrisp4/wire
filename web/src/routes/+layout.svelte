@@ -1,16 +1,12 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount } from 'svelte';
 	import { navItems } from '$lib/nav';
-	import Sidebar from '$lib/components/Sidebar.svelte';
-	import { applyStoredPrefs } from '$lib/prefs';
+	import { handleKeydown } from '$lib/shortcuts';
 
 	let { children } = $props();
-
-	onMount(() => {
-		applyStoredPrefs();
-	});
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <div class="shell">
 	<aside class="sidebar">
@@ -23,7 +19,6 @@
 		</nav>
 
 		<!-- Unit 12b: sidebar-content -->
-		<Sidebar />
 		<!-- Unit 12b: end -->
 	</aside>
 
