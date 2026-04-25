@@ -2,6 +2,7 @@ package ratelimit
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -76,6 +77,17 @@ func TestBackoffSeconds_JitterVaries(t *testing.T) {
 		seen[BackoffSeconds(1)] = struct{}{}
 	}
 	assert.Greater(t, len(seen), 1, "expected jitter to produce varied delays")
+}
+
+func TestAcquire_RejectsNonPositiveInputs(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct{ limit, windowSec int }{
+		{0, 1}, {-1, 1}, {1, 0}, {1, -1}, {0, 0},
+	} {
+		ok, err := Acquire(ctx, nil, "example.com", tc.limit, tc.windowSec)
+		assert.False(t, ok)
+		assert.True(t, errors.Is(err, ErrInvalidLimit), "limit=%d windowSec=%d: want ErrInvalidLimit, got %v", tc.limit, tc.windowSec, err)
+	}
 }
 
 func TestAcquire_WindowAllowsThenBlocksThenResets(t *testing.T) {

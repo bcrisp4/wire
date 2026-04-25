@@ -10,9 +10,13 @@ package ratelimit
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 )
+
+// ErrInvalidLimit is returned by Acquire when limit or windowSec is non-positive.
+var ErrInvalidLimit = errors.New("ratelimit: limit and windowSec must be > 0")
 
 const (
 	backoffBaseSeconds = 60    // 1 minute
@@ -26,13 +30,16 @@ const (
 // keying by "feed-host:" + host. There is no release/refund — the underlying
 // counter is a fixed window.
 func Acquire(ctx context.Context, db *sql.DB, host string, limit, windowSec int) (bool, error) {
+	if limit <= 0 || windowSec <= 0 {
+		return false, ErrInvalidLimit
+	}
 	var n int64
 	err := db.QueryRowContext(ctx,
 		"SELECT honker_rate_limit_try(?, ?, ?)",
 		"feed-host:"+host, limit, windowSec,
 	).Scan(&n)
 	if err != nil {
-		return false, fmt.Errorf("ratelimit: %w", err)
+		return false, fmt.Errorf("ratelimit: acquire(host=%q, limit=%d, windowSec=%d): %w", host, limit, windowSec, err)
 	}
 	return n == 1, nil
 }
