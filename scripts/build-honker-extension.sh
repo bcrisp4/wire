@@ -1,7 +1,17 @@
 #!/usr/bin/env bash
-# Builds the Honker SQLite extension as a cdylib and drops it at ./build/libhonker_extension.{so,dylib}.
+# Builds the Honker SQLite extension as a cdylib and drops it at ./build/libhonker_ext.{so,dylib}.
 # Re-run after upgrading the honker-go version pinned in go.mod.
 set -euo pipefail
+
+# Make cargo available to non-interactive shells (rustup default install path).
+if ! command -v cargo >/dev/null 2>&1 && [[ -f "$HOME/.cargo/env" ]]; then
+  # shellcheck disable=SC1091
+  . "$HOME/.cargo/env"
+fi
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "ERROR: cargo not found. Install Rust via https://rustup.rs/ then re-run." >&2
+  exit 1
+fi
 
 HONKER_REPO="${HONKER_REPO:-https://github.com/russellromney/honker.git}"
 HONKER_REF="${HONKER_REF:-main}"
