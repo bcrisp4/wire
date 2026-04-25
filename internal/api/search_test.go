@@ -26,6 +26,10 @@ type fakeStore struct {
 
 func (f *fakeStore) Entries() store.EntryRepo { return f.entries }
 
+// registerCategoryRoutes (added by Unit 7) stores the repo in handler closures
+// only, so returning nil is safe as long as no test hits /api/v1/categories.
+func (f *fakeStore) Categories() store.CategoryRepo { return nil }
+
 type fakeEntryRepo struct {
 	store.EntryRepo
 	lastUserID int64
