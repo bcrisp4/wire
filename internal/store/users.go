@@ -38,6 +38,9 @@ func (r *userRepo) Get(ctx context.Context, id int64) (*model.User, error) {
 // Update writes mutable preference columns. id, username, and created_at are
 // immutable and untouched even if the caller modified them on the struct.
 func (r *userRepo) Update(ctx context.Context, u *model.User) error {
+	if u == nil {
+		return fmt.Errorf("users.Update: nil user")
+	}
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE users
 		    SET theme = ?, font = ?, entries_per_page = ?, default_sort = ?, default_order = ?

@@ -82,3 +82,10 @@ func TestUserRepo_UpdateMissingUserReturnsErrNotFound(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNotFound), "expected ErrNotFound, got %v", err)
 }
+
+func TestUserRepo_UpdateNilUserReturnsError(t *testing.T) {
+	s := newTestStore(t)
+	err := s.Users().Update(context.Background(), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "nil user")
+}
