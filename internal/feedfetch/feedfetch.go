@@ -85,10 +85,19 @@ func WithUserAgent(s string) Option {
 }
 
 // WithHTTPClient injects a custom *http.Client. Primarily for tests.
-// Note: when supplied, the caller's CheckRedirect is replaced so the
-// redirect cap is still enforced.
+//
+// The supplied client is shallow-copied so Fetcher-specific changes (such
+// as installing a CheckRedirect that enforces the redirect cap) do not
+// mutate caller-owned shared state.
 func WithHTTPClient(c *http.Client) Option {
-	return func(f *Fetcher) { f.client = c }
+	return func(f *Fetcher) {
+		if c == nil {
+			f.client = nil
+			return
+		}
+		clone := *c
+		f.client = &clone
+	}
 }
 
 // Fetcher executes feed requests. Construct once per process and reuse.
@@ -134,7 +143,8 @@ func New(opts ...Option) *Fetcher {
 //   - (nil, *StatusError) for any other HTTP status
 //   - (nil, ErrTooManyRedirects) when redirect cap is exceeded
 //   - (nil, ErrBodyTooLarge) when the response body exceeds MaxBodyBytes
-//   - (nil, ctx.Err()) on context cancellation
+//   - (nil, wrapped error) on context cancellation or deadline; use
+//     errors.Is(err, context.Canceled) / context.DeadlineExceeded to test.
 func (f *Fetcher) Fetch(ctx context.Context, req Request) (*Response, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
@@ -183,6 +193,9 @@ func (f *Fetcher) Fetch(ctx context.Context, req Request) (*Response, error) {
 	switch {
 	case resp.Status == http.StatusNotModified:
 		resp.NotModified = true
+		// 304 responses are not supposed to have a body, but some servers
+		// send one anyway. Drain (bounded) so the connection can be reused.
+		drainBody(httpResp.Body, f.maxBodyBytes)
 		return resp, nil
 	case resp.Status >= 200 && resp.Status < 300:
 		body, err := readCapped(httpResp.Body, f.maxBodyBytes)
@@ -192,8 +205,19 @@ func (f *Fetcher) Fetch(ctx context.Context, req Request) (*Response, error) {
 		resp.Body = body
 		return resp, nil
 	default:
+		// Drain the body (bounded) before returning so the underlying
+		// connection can be reused by the next poll.
+		drainBody(httpResp.Body, f.maxBodyBytes)
 		return nil, &StatusError{Status: resp.Status, RetryAfter: resp.RetryAfter}
 	}
+}
+
+// drainBody reads and discards up to max bytes from r so the underlying
+// HTTP connection can be reused. Errors are intentionally ignored: this
+// runs on paths that already have a result (a *StatusError or 304) and
+// connection reuse is best-effort.
+func drainBody(r io.Reader, max int64) {
+	_, _ = io.Copy(io.Discard, io.LimitReader(r, max))
 }
 
 // readCapped reads at most max+1 bytes; if the +1 byte arrives, the body
