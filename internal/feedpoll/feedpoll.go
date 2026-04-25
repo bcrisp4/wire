@@ -177,10 +177,19 @@ func (d *Deps) backoff(attempts int) int {
 	return delay
 }
 
-// pollPayload is the JSON shape of a feed.poll job.
+// pollPayload is the JSON shape of a feed.poll job. The cron-fired tick uses
+// Type="tick" with no FeedID; per-feed jobs (enqueued by EnqueueDue) use a
+// non-zero FeedID. Empty/null payloads are treated as ticks for compatibility
+// with cron tasks scheduled without an explicit payload.
 type pollPayload struct {
-	FeedID int64 `json:"feed_id"`
+	Type   string `json:"type,omitempty"`
+	FeedID int64  `json:"feed_id,omitempty"`
 }
+
+// TickPayload is the canonical payload for the cron-fired dispatcher tick.
+// cmd/wire passes this as the ScheduledTask.Payload so the worker can
+// distinguish a fan-out tick from a per-feed poll job.
+var TickPayload = json.RawMessage(`{"type":"tick"}`)
 
 // EnqueueDue enqueues a feed.poll job for every feed whose next_poll_at <= now.
 // Called by the cron handler (or directly in tests).
@@ -257,11 +266,36 @@ func sleepOrCancel(ctx context.Context, d time.Duration) bool {
 // processJob handles a single feed.poll job. Errors returned here are
 // observability-only; per-job failure is signaled via Job.Fail / feed updates.
 func processJob(ctx context.Context, deps Deps, job *jobs.Job) error {
+	// Empty/null payloads from cron-without-payload are treated as ticks.
+	raw := strings.TrimSpace(string(job.Payload))
+	if raw == "" || raw == "null" {
+		if err := EnqueueDue(ctx, deps, 0); err != nil {
+			// Honker will retry on Fail; transient DB blips shouldn't drop
+			// the tick or we lose a polling cycle.
+			return job.Fail(ctx, err.Error(), deps.backoff(int(job.Attempts)))
+		}
+		return job.Ack(ctx)
+	}
+
 	var p pollPayload
 	if err := json.Unmarshal(job.Payload, &p); err != nil {
 		// Malformed payload: ack and drop so it doesn't requeue forever.
 		_ = job.Ack(ctx)
 		return fmt.Errorf("feedpoll: unmarshal payload: %w", err)
+	}
+
+	// Tick: fan out per-feed jobs for everything currently due, then ack.
+	if p.Type == "tick" {
+		if err := EnqueueDue(ctx, deps, 0); err != nil {
+			return job.Fail(ctx, err.Error(), deps.backoff(int(job.Attempts)))
+		}
+		return job.Ack(ctx)
+	}
+
+	if p.FeedID == 0 {
+		// Defensive: a non-tick payload with no feed_id is malformed; drop.
+		_ = job.Ack(ctx)
+		return fmt.Errorf("feedpoll: missing feed_id in payload")
 	}
 
 	feed, err := deps.Feeds.Get(ctx, p.FeedID)
@@ -378,19 +412,26 @@ func applyPollSuccess(f *model.Feed, now time.Time, resp *FetchResponse) {
 	f.LastError = nil
 }
 
-// retryWithError increments error_count on the feed, persists last_error, and
-// asks Honker to retry the job using the configured backoff. The feed Update
-// failing is logged via the returned error but does not block the Job.Fail
-// call — we don't want a transient DB error to also lose the retry.
+// retryWithError increments error_count on the feed, persists last_error and
+// next_poll_at using the configured backoff, then asks Honker to retry the job
+// on the same schedule. Updating next_poll_at keeps EnqueueDue from re-firing
+// this feed while Honker is also retrying, which would otherwise produce
+// duplicate in-flight jobs (design.md §5: exponential backoff on next_poll_at
+// for transient errors). The feed Update failing is logged via the returned
+// error but does not block the Job.Fail call — a transient DB error shouldn't
+// also lose the retry.
 func retryWithError(ctx context.Context, deps Deps, job *jobs.Job, feed *model.Feed, cause error) error {
 	msg := cause.Error()
+	backoff := deps.backoff(int(job.Attempts))
 	feed.ErrorCount++
 	feed.LastError = &msg
+	next := deps.now().Add(time.Duration(backoff) * time.Second).Unix()
+	feed.NextPollAt = &next
 	if updErr := deps.Feeds.Update(ctx, feed); updErr != nil {
 		// Log via returned error; still attempt the job retry.
 		deps.Logger.Error("update feed after error", "feed_id", feed.ID, "err", updErr)
 	}
-	return job.Fail(ctx, msg, deps.backoff(int(job.Attempts)))
+	return job.Fail(ctx, msg, backoff)
 }
 
 // isDuplicateEntryErr returns true for SQLite UNIQUE-constraint errors so the

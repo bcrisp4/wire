@@ -8,6 +8,7 @@ import (
 
 	"github.com/bcrisp4/wire/internal/api"
 	"github.com/bcrisp4/wire/internal/config"
+	"github.com/bcrisp4/wire/internal/feedpoll"
 	"github.com/bcrisp4/wire/internal/jobs"
 	"github.com/bcrisp4/wire/internal/logger"
 	"github.com/bcrisp4/wire/internal/store"
@@ -39,13 +40,14 @@ func serve(ctx context.Context) error {
 	}
 
 	// Unit 4: feed.poll cron replaces the Phase 0 wire.heartbeat canary.
-	// The worker goroutine that drains this queue is wired in once Unit 0
-	// (store.New), Unit 1 (parser), and Unit 2 (fetcher) land — see the
-	// TODO block below.
+	// The cron tick uses feedpoll.TickPayload so the worker (wired below
+	// once sibling units land) can distinguish dispatcher ticks from
+	// per-feed poll jobs and call EnqueueDue to fan out.
 	if err := hb.Scheduler().Schedule(jobs.ScheduledTask{
-		Name:  jobs.QueueFeedPoll,
-		Cron:  "* * * * *",
-		Queue: jobs.QueueFeedPoll,
+		Name:    jobs.QueueFeedPoll,
+		Cron:    "* * * * *",
+		Queue:   jobs.QueueFeedPoll,
+		Payload: feedpoll.TickPayload,
 	}); err != nil {
 		return fmt.Errorf("schedule feed.poll: %w", err)
 	}
