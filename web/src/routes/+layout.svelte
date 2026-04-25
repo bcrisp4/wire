@@ -1,14 +1,8 @@
 <script lang="ts">
 	import '../app.css';
-	import { onMount } from 'svelte';
 	import { navItems } from '$lib/nav';
-	import { registerServiceWorker } from '$lib/sw-register';
 
 	let { children } = $props();
-
-	onMount(() => {
-		registerServiceWorker();
-	});
 </script>
 
 <div class="shell">
