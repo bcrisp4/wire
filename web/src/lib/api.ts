@@ -16,7 +16,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 	if (init.body !== undefined && headers['Content-Type'] === undefined) {
 		headers['Content-Type'] = 'application/json';
 	}
-	const res = await fetch(`${BASE}${path}`, { ...init, headers });
+	return send<T>(path, { ...init, headers });
+}
+
+// send performs the fetch and uniform error handling shared by request() and
+// postFormData(). Caller is responsible for any Content-Type headers; this
+// function does NOT inject defaults so multipart bodies keep their boundary.
+async function send<T>(path: string, init: RequestInit): Promise<T> {
+	const res = await fetch(`${BASE}${path}`, init);
 	if (!res.ok) {
 		let message = res.statusText;
 		let body: unknown;
@@ -42,5 +49,10 @@ export const api = {
 		request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
 	put: <T>(path: string, body: unknown) =>
 		request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
-	delete: <T>(path: string) => request<T>(path, { method: 'DELETE' })
+	delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+	// postFormData submits multipart/form-data. Do NOT set Content-Type — the
+	// browser fills in the boundary automatically when fetch sees a FormData
+	// body. Setting it explicitly here would strip the boundary and the server
+	// would reject the body as malformed.
+	postFormData: <T>(path: string, fd: FormData) => send<T>(path, { method: 'POST', body: fd })
 };
