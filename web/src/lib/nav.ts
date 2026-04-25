@@ -12,6 +12,5 @@ export const navItems: NavItem[] = [
 	{ href: '/', label: 'River' },
 	{ href: '/all', label: 'All' },
 	{ href: '/saved', label: 'Saved' },
-	{ href: '/settings', label: 'Settings' },
-	{ href: '/feeds/add', label: 'Add Feed' }
+	{ href: '/settings', label: 'Settings' }
 ];

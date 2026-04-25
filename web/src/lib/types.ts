@@ -82,10 +82,6 @@ export interface DiscoverCandidate {
 	type: 'rss' | 'atom' | 'json';
 }
 
-export interface DiscoverResponse {
-	candidates: DiscoverCandidate[];
-}
-
 export interface OpmlImportResult {
 	imported: number;
 	skipped_duplicates: number;
