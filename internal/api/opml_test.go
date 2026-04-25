@@ -1,0 +1,356 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/bcrisp4/wire/internal/model"
+	"github.com/bcrisp4/wire/internal/opml"
+	"github.com/bcrisp4/wire/internal/store"
+)
+
+// opmlFakeStore implements store.Store with the only repos OPML handlers need.
+// Other repos return nil and are unused by the OPML endpoints.
+type opmlFakeStore struct {
+	mu         sync.Mutex
+	cats       []model.Category
+	feeds      []model.Feed
+	nextCatID  int64
+	nextFeedID int64
+}
+
+func newFakeStore() *opmlFakeStore {
+	return &opmlFakeStore{nextCatID: 1, nextFeedID: 1}
+}
+
+func (s *opmlFakeStore) Users() store.UserRepo           { return nil }
+func (s *opmlFakeStore) Categories() store.CategoryRepo  { return &fakeCats{s: s} }
+func (s *opmlFakeStore) Feeds() store.FeedRepo           { return &fakeFeeds{s: s} }
+func (s *opmlFakeStore) Entries() store.EntryRepo        { return nil }
+func (s *opmlFakeStore) Icons() store.IconRepo           { return nil }
+func (s *opmlFakeStore) Tombstones() store.TombstoneRepo { return nil }
+func (s *opmlFakeStore) Enclosures() store.EnclosureRepo { return nil }
+func (s *opmlFakeStore) Close() error                    { return nil }
+
+type fakeCats struct{ s *opmlFakeStore }
+
+func (c *fakeCats) List(_ context.Context, userID int64) ([]model.Category, error) {
+	c.s.mu.Lock()
+	defer c.s.mu.Unlock()
+	out := make([]model.Category, 0, len(c.s.cats))
+	for _, cat := range c.s.cats {
+		if cat.UserID == userID {
+			out = append(out, cat)
+		}
+	}
+	return out, nil
+}
+func (c *fakeCats) Create(_ context.Context, m *model.Category) error {
+	c.s.mu.Lock()
+	defer c.s.mu.Unlock()
+	for _, e := range c.s.cats {
+		if e.UserID == m.UserID && e.Name == m.Name {
+			return fmt.Errorf("UNIQUE constraint failed: categories.user_id, categories.name")
+		}
+	}
+	m.ID = c.s.nextCatID
+	c.s.nextCatID++
+	c.s.cats = append(c.s.cats, *m)
+	return nil
+}
+func (c *fakeCats) Rename(context.Context, int64, string) error { return errors.New("not used") }
+func (c *fakeCats) Delete(context.Context, int64) error         { return errors.New("not used") }
+
+type fakeFeeds struct{ s *opmlFakeStore }
+
+func (f *fakeFeeds) List(_ context.Context, userID int64) ([]model.Feed, error) {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	out := make([]model.Feed, 0, len(f.s.feeds))
+	for _, fd := range f.s.feeds {
+		if fd.UserID == userID {
+			out = append(out, fd)
+		}
+	}
+	return out, nil
+}
+func (f *fakeFeeds) Get(context.Context, int64) (*model.Feed, error) {
+	return nil, errors.New("not used")
+}
+func (f *fakeFeeds) Create(_ context.Context, m *model.Feed) error {
+	f.s.mu.Lock()
+	defer f.s.mu.Unlock()
+	for _, e := range f.s.feeds {
+		if e.UserID == m.UserID && e.FeedURL == m.FeedURL {
+			return fmt.Errorf("UNIQUE constraint failed: feeds.user_id, feeds.feed_url")
+		}
+	}
+	m.ID = f.s.nextFeedID
+	f.s.nextFeedID++
+	f.s.feeds = append(f.s.feeds, *m)
+	return nil
+}
+func (f *fakeFeeds) Update(context.Context, *model.Feed) error { return errors.New("not used") }
+func (f *fakeFeeds) Delete(context.Context, int64) error       { return errors.New("not used") }
+func (f *fakeFeeds) DueForPolling(context.Context, int64, int) ([]model.Feed, error) {
+	return nil, errors.New("not used")
+}
+
+func newOPMLTestHandler(t *testing.T, st store.Store) http.Handler {
+	t.Helper()
+	mux := http.NewServeMux()
+	registerOPMLRoutes(mux, st, slogDiscard())
+	return mux
+}
+
+const sampleOPML = `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Test</title></head>
+  <body>
+    <outline title="News">
+      <outline type="rss" xmlUrl="https://hn.example/rss" htmlUrl="https://hn.example" title="HN" />
+    </outline>
+    <outline type="atom" xmlUrl="https://orphan.example/feed" htmlUrl="https://orphan.example" title="Orphan" />
+  </body>
+</opml>`
+
+func TestOPML_ImportFlatXML(t *testing.T) {
+	st := newFakeStore()
+	h := newOPMLTestHandler(t, st)
+
+	r := httptest.NewRequest("POST", "/api/v1/opml/import", strings.NewReader(sampleOPML))
+	r.Header.Set("Content-Type", "application/xml")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var got map[string]int
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, 2, got["imported"])
+	assert.Equal(t, 1, got["categories_created"])
+	assert.Equal(t, 0, got["skipped_duplicates"])
+
+	feeds, _ := st.Feeds().List(context.Background(), 1)
+	require.Len(t, feeds, 2)
+	cats, _ := st.Categories().List(context.Background(), 1)
+	require.Len(t, cats, 1)
+	assert.Equal(t, "News", cats[0].Name)
+
+	for _, f := range feeds {
+		assert.Equal(t, 3600, f.PollInterval)
+		assert.False(t, f.Crawler)
+		require.NotNil(t, f.NextPollAt)
+	}
+}
+
+func TestOPML_ImportSkipsDuplicates(t *testing.T) {
+	st := newFakeStore()
+	h := newOPMLTestHandler(t, st)
+
+	post := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "/api/v1/opml/import", strings.NewReader(sampleOPML))
+		r.Header.Set("Content-Type", "application/xml")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	first := post()
+	require.Equal(t, http.StatusOK, first.Code)
+	second := post()
+	require.Equal(t, http.StatusOK, second.Code, second.Body.String())
+
+	var got map[string]int
+	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &got))
+	assert.Equal(t, 0, got["imported"])
+	assert.Equal(t, 2, got["skipped_duplicates"])
+	assert.Equal(t, 0, got["categories_created"])
+
+	feeds, _ := st.Feeds().List(context.Background(), 1)
+	assert.Len(t, feeds, 2)
+}
+
+func TestOPML_ImportMultipart(t *testing.T) {
+	st := newFakeStore()
+	h := newOPMLTestHandler(t, st)
+
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	fw, err := mw.CreateFormFile("file", "subs.opml")
+	require.NoError(t, err)
+	_, err = io.WriteString(fw, sampleOPML)
+	require.NoError(t, err)
+	require.NoError(t, mw.Close())
+
+	r := httptest.NewRequest("POST", "/api/v1/opml/import", &body)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	feeds, _ := st.Feeds().List(context.Background(), 1)
+	assert.Len(t, feeds, 2)
+}
+
+func TestOPML_ImportRejectsMalformedXML(t *testing.T) {
+	st := newFakeStore()
+	h := newOPMLTestHandler(t, st)
+
+	r := httptest.NewRequest("POST", "/api/v1/opml/import", strings.NewReader("<opml><body>"))
+	r.Header.Set("Content-Type", "application/xml")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestOPML_ImportTrimsWhitespace(t *testing.T) {
+	st := newFakeStore()
+	h := newOPMLTestHandler(t, st)
+
+	// Whitespace around xmlUrl, title, and category names: all must be
+	// normalised so duplicate detection works and persisted values are clean.
+	const doc = `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Test</title></head>
+  <body>
+    <outline title=" News ">
+      <outline type="rss" xmlUrl="  https://hn.example/rss  " title="  HN  " />
+    </outline>
+  </body>
+</opml>`
+	r := httptest.NewRequest("POST", "/api/v1/opml/import", strings.NewReader(doc))
+	r.Header.Set("Content-Type", "application/xml")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	feeds, _ := st.Feeds().List(context.Background(), 1)
+	require.Len(t, feeds, 1)
+	assert.Equal(t, "https://hn.example/rss", feeds[0].FeedURL)
+	assert.Equal(t, "HN", feeds[0].Title)
+	cats, _ := st.Categories().List(context.Background(), 1)
+	require.Len(t, cats, 1)
+	assert.Equal(t, "News", cats[0].Name)
+}
+
+func TestOPML_ImportConflictTreatedAsDuplicate(t *testing.T) {
+	// Repos that wrap UNIQUE violations as store.ErrConflict (the canonical
+	// API once Phase 1 storage units land) must still be mapped to the
+	// "skipped_duplicates" bucket rather than 500'd.
+	st := &errConflictStore{opmlFakeStore: newFakeStore()}
+	h := newOPMLTestHandler(t, st)
+
+	r := httptest.NewRequest("POST", "/api/v1/opml/import", strings.NewReader(sampleOPML))
+	r.Header.Set("Content-Type", "application/xml")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	r2 := httptest.NewRequest("POST", "/api/v1/opml/import", strings.NewReader(sampleOPML))
+	r2.Header.Set("Content-Type", "application/xml")
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, r2)
+	require.Equal(t, http.StatusOK, w2.Code, w2.Body.String())
+
+	var got map[string]int
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &got))
+	assert.Equal(t, 0, got["imported"])
+	assert.Equal(t, 2, got["skipped_duplicates"])
+}
+
+// errConflictStore wraps opmlFakeStore so Create returns store.ErrConflict instead
+// of the legacy "UNIQUE constraint failed" text, exercising the typed-error
+// path in isConflict.
+type errConflictStore struct{ *opmlFakeStore }
+
+func (s *errConflictStore) Categories() store.CategoryRepo {
+	return &errConflictCats{base: s.opmlFakeStore.Categories().(*fakeCats)}
+}
+func (s *errConflictStore) Feeds() store.FeedRepo {
+	return &errConflictFeeds{base: s.opmlFakeStore.Feeds().(*fakeFeeds)}
+}
+
+type errConflictCats struct{ base *fakeCats }
+
+func (c *errConflictCats) List(ctx context.Context, userID int64) ([]model.Category, error) {
+	return c.base.List(ctx, userID)
+}
+func (c *errConflictCats) Create(ctx context.Context, m *model.Category) error {
+	if err := c.base.Create(ctx, m); err != nil {
+		return fmt.Errorf("create category: %w", store.ErrConflict)
+	}
+	return nil
+}
+func (c *errConflictCats) Rename(context.Context, int64, string) error {
+	return errors.New("not used")
+}
+func (c *errConflictCats) Delete(context.Context, int64) error { return errors.New("not used") }
+
+type errConflictFeeds struct{ base *fakeFeeds }
+
+func (f *errConflictFeeds) List(ctx context.Context, userID int64) ([]model.Feed, error) {
+	return f.base.List(ctx, userID)
+}
+func (f *errConflictFeeds) Get(ctx context.Context, id int64) (*model.Feed, error) {
+	return f.base.Get(ctx, id)
+}
+func (f *errConflictFeeds) Create(ctx context.Context, m *model.Feed) error {
+	if err := f.base.Create(ctx, m); err != nil {
+		return fmt.Errorf("create feed: %w", store.ErrConflict)
+	}
+	return nil
+}
+func (f *errConflictFeeds) Update(ctx context.Context, m *model.Feed) error {
+	return f.base.Update(ctx, m)
+}
+func (f *errConflictFeeds) Delete(ctx context.Context, id int64) error {
+	return f.base.Delete(ctx, id)
+}
+func (f *errConflictFeeds) DueForPolling(ctx context.Context, now int64, limit int) ([]model.Feed, error) {
+	return f.base.DueForPolling(ctx, now, limit)
+}
+
+func TestOPML_Export(t *testing.T) {
+	st := newFakeStore()
+	require.NoError(t, st.Categories().Create(context.Background(), &model.Category{UserID: 1, Name: "News"}))
+	cats, _ := st.Categories().List(context.Background(), 1)
+	catID := cats[0].ID
+	siteHN := "https://hn.example"
+	siteOrphan := "https://orphan.example"
+	require.NoError(t, st.Feeds().Create(context.Background(), &model.Feed{
+		UserID: 1, CategoryID: &catID, Title: "HN", FeedURL: "https://hn.example/rss", SiteURL: &siteHN,
+	}))
+	require.NoError(t, st.Feeds().Create(context.Background(), &model.Feed{
+		UserID: 1, Title: "Orphan", FeedURL: "https://orphan.example/feed", SiteURL: &siteOrphan,
+	}))
+
+	h := newOPMLTestHandler(t, st)
+	r := httptest.NewRequest("GET", "/api/v1/opml/export", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.Contains(t, w.Header().Get("Content-Type"), "xml")
+
+	subs, err := opml.Parse(bytes.NewReader(w.Body.Bytes()))
+	require.NoError(t, err)
+	require.Len(t, subs, 2)
+
+	byURL := map[string]opml.Subscription{}
+	for _, s := range subs {
+		byURL[s.FeedURL] = s
+	}
+	assert.Equal(t, "News", byURL["https://hn.example/rss"].Category)
+	assert.Equal(t, "", byURL["https://orphan.example/feed"].Category)
+}
