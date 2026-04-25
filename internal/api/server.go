@@ -67,6 +67,11 @@ func NewServer(opts Options) (*Server, error) {
 		mux.Handle("GET /api/v1/search", searchHandler(opts.Store, opts.Logger))
 	}
 	// end Unit 9: search
+	// Unit 10: opml
+	if opts.Store != nil {
+		registerOPMLRoutes(mux, opts.Store, opts.Logger)
+	}
+	// Unit 10: opml end
 
 	if opts.SPA != nil {
 		mux.Handle("/", opts.SPA)
