@@ -95,12 +95,18 @@ func (r *categoryRepo) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-// mapSQLiteErr converts mattn/go-sqlite3 UNIQUE constraint failures to
-// ErrConflict; other errors pass through unchanged.
+// mapSQLiteErr converts mattn/go-sqlite3 constraint failures to store-level
+// sentinels: UNIQUE violations -> ErrConflict, FOREIGN KEY violations ->
+// ErrInvalid. Other errors pass through unchanged.
 func mapSQLiteErr(err error) error {
 	var serr sqlite3.Error
-	if errors.As(err, &serr) && serr.ExtendedCode == sqlite3.ErrConstraintUnique {
-		return fmt.Errorf("%w: %s", ErrConflict, serr.Error())
+	if errors.As(err, &serr) {
+		switch serr.ExtendedCode {
+		case sqlite3.ErrConstraintUnique:
+			return fmt.Errorf("%w: %s", ErrConflict, serr.Error())
+		case sqlite3.ErrConstraintForeignKey:
+			return fmt.Errorf("%w: %s", ErrInvalid, serr.Error())
+		}
 	}
 	return err
 }

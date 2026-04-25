@@ -11,3 +11,8 @@ var ErrNotFound = errors.New("store: not found")
 // (e.g. duplicate category name, duplicate feed_url for a user). Handlers
 // translate this to HTTP 409 Conflict.
 var ErrConflict = errors.New("store: conflict")
+
+// ErrInvalid is returned when a write supplies a value the schema rejects
+// (e.g. a foreign-key reference to a row that does not exist). Handlers
+// translate this to HTTP 400 Bad Request.
+var ErrInvalid = errors.New("store: invalid")

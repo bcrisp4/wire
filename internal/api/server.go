@@ -41,24 +41,31 @@ func NewServer(opts Options) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/health", healthHandler())
 
+	s := &Server{
+		opts:  opts,
+		ready: make(chan struct{}),
+	}
 	// Unit 7: categories
 	if opts.Store != nil {
 		registerCategoryRoutes(mux, opts.Store.Categories(), opts.Logger)
 	}
 	// End Unit 7
+	// Unit 6: feeds
+	if opts.Store != nil && opts.Queue != nil {
+		s.registerFeedRoutes(mux)
+	}
+	// Unit 6: feeds end
 
 	if opts.SPA != nil {
 		mux.Handle("/", opts.SPA)
 	}
 
-	return &Server{
-		opts: opts,
-		http: &http.Server{
-			Handler:           requestLogger(opts.Logger)(panicRecover(opts.Logger)(mux)),
-			ReadHeaderTimeout: 10 * time.Second,
-		},
-		ready: make(chan struct{}),
-	}, nil
+	chain := requestLogger(opts.Logger)(panicRecover(opts.Logger)(mux))
+	s.http = &http.Server{
+		Handler:           chain,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	return s, nil
 }
 
 // Handler returns the fully-chained HTTP handler. Useful for httptest.NewServer
