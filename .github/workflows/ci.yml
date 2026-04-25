@@ -21,7 +21,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version-file: 'go.mod'
           check-latest: true
 
       - name: Set up Node
@@ -52,7 +52,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.11.4
           args: --build-tags 'sqlite_fts5 sqlite_load_extension'
 
       - name: Docker build
