@@ -104,7 +104,7 @@ type fakeStore struct{ feeds *fakeFeedRepo }
 func (s *fakeStore) Users() store.UserRepo           { panic("Users not used") }
 func (s *fakeStore) Categories() store.CategoryRepo  { return nil }
 func (s *fakeStore) Feeds() store.FeedRepo           { return s.feeds }
-func (s *fakeStore) Entries() store.EntryRepo        { panic("Entries not used") }
+func (s *fakeStore) Entries() store.EntryRepo        { return nil }
 func (s *fakeStore) Icons() store.IconRepo           { panic("Icons not used") }
 func (s *fakeStore) Tombstones() store.TombstoneRepo { panic("Tombstones not used") }
 func (s *fakeStore) Enclosures() store.EnclosureRepo { panic("Enclosures not used") }
