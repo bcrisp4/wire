@@ -14,13 +14,24 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { swipe } from './swipe';
 
 class FakePointerEvent extends MouseEvent {
-	constructor(type: string, init: { clientX: number; clientY: number }) {
+	pointerId: number;
+	constructor(
+		type: string,
+		init: { clientX: number; clientY: number; pointerId?: number },
+	) {
 		super(type, { bubbles: true, cancelable: true, ...init });
+		this.pointerId = init.pointerId ?? 1;
 	}
 }
 
-function fire(node: HTMLElement, type: 'pointerdown' | 'pointerup', x: number, y: number) {
-	node.dispatchEvent(new FakePointerEvent(type, { clientX: x, clientY: y }));
+function fire(
+	node: HTMLElement,
+	type: 'pointerdown' | 'pointerup' | 'pointercancel',
+	x: number,
+	y: number,
+	pointerId = 1,
+) {
+	node.dispatchEvent(new FakePointerEvent(type, { clientX: x, clientY: y, pointerId }));
 }
 
 describe('swipe attachment', () => {
@@ -87,6 +98,29 @@ describe('swipe attachment', () => {
 
 		expect(onLeft).not.toHaveBeenCalled();
 		expect(onRight).not.toHaveBeenCalled();
+
+		cleanup?.();
+	});
+
+	test('ignores a second pointer that lands while one is already tracked', () => {
+		const onLeft = vi.fn();
+		const onRight = vi.fn();
+		const cleanup = swipe({ onLeft, onRight })(node);
+
+		// Primary finger lands at x=100, would-be right swipe.
+		fire(node, 'pointerdown', 100, 100, 1);
+		// Secondary finger lands at x=500 — must NOT overwrite the start position.
+		fire(node, 'pointerdown', 500, 100, 2);
+		// Secondary finger lifts; not the active pointer, so no swipe fires.
+		fire(node, 'pointerup', 510, 100, 2);
+		expect(onLeft).not.toHaveBeenCalled();
+		expect(onRight).not.toHaveBeenCalled();
+
+		// Primary finger lifts at x=200 — dx = +100 from the original start (100),
+		// not from the secondary's start (500). Right swipe.
+		fire(node, 'pointerup', 200, 100, 1);
+		expect(onRight).toHaveBeenCalledTimes(1);
+		expect(onLeft).not.toHaveBeenCalled();
 
 		cleanup?.();
 	});

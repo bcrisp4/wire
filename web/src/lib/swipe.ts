@@ -10,9 +10,9 @@
 // horizontal delta the gesture is treated as a scroll and ignored, so this
 // won't fight a vertical scroll inside the same element.
 //
-// pointerup is bound on the element itself rather than `window` so a swipe
-// that ends outside the element (e.g. the pointer drifts off the edge) is
-// dropped on the floor rather than firing for the wrong card.
+// Only the first active pointer is tracked. Secondary pointerdowns (a second
+// finger, a second mouse button) are ignored until the active gesture ends,
+// so a stray touch can't overwrite the gesture's start position.
 
 import type { Attachment } from 'svelte/attachments';
 
@@ -27,17 +27,18 @@ export function swipe(handlers: SwipeHandlers): Attachment<HTMLElement> {
 	return (node: HTMLElement) => {
 		let startX = 0;
 		let startY = 0;
-		let tracking = false;
+		let activePointerId: number | null = null;
 
 		const onPointerDown = (event: PointerEvent) => {
+			if (activePointerId !== null) return;
+			activePointerId = event.pointerId;
 			startX = event.clientX;
 			startY = event.clientY;
-			tracking = true;
 		};
 
 		const onPointerUp = (event: PointerEvent) => {
-			if (!tracking) return;
-			tracking = false;
+			if (event.pointerId !== activePointerId) return;
+			activePointerId = null;
 			const dx = event.clientX - startX;
 			const dy = event.clientY - startY;
 			// Dominant vertical motion is a scroll, not a swipe.
@@ -49,8 +50,9 @@ export function swipe(handlers: SwipeHandlers): Attachment<HTMLElement> {
 			}
 		};
 
-		const onPointerCancel = () => {
-			tracking = false;
+		const onPointerCancel = (event: PointerEvent) => {
+			if (event.pointerId !== activePointerId) return;
+			activePointerId = null;
 		};
 
 		node.addEventListener('pointerdown', onPointerDown);
