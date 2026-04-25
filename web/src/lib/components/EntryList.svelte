@@ -7,9 +7,9 @@
 		loading: boolean;
 		hasMore: boolean;
 		onLoadMore?: () => void;
-		onexpand?: (entry: Entry) => void;
-		onmarkread?: (entry: Entry) => void;
-		ontogglesaved?: (entry: Entry) => void;
+		onExpand?: (id: number) => void;
+		onMarkRead?: (id: number) => void;
+		onToggleSaved?: (id: number) => void;
 	};
 
 	let {
@@ -17,17 +17,17 @@
 		loading,
 		hasMore,
 		onLoadMore,
-		onexpand,
-		onmarkread,
-		ontogglesaved
+		onExpand,
+		onMarkRead,
+		onToggleSaved
 	}: Props = $props();
 
 	let expandedID = $state<number | null>(null);
 
-	function toggle(entry: Entry) {
-		const willExpand = expandedID !== entry.id;
-		expandedID = willExpand ? entry.id : null;
-		if (willExpand) onexpand?.(entry);
+	function handleToggle(id: number) {
+		const willExpand = expandedID !== id;
+		expandedID = willExpand ? id : null;
+		if (willExpand) onExpand?.(id);
 	}
 
 	// `IntersectionObserver` is wired via an attachment so the observer is
@@ -53,9 +53,9 @@
 		<EntryCard
 			{entry}
 			expanded={expandedID === entry.id}
-			ontoggle={() => toggle(entry)}
-			onmarkread={() => onmarkread?.(entry)}
-			ontogglesaved={() => ontogglesaved?.(entry)}
+			ontoggle={() => handleToggle(entry.id)}
+			onmarkread={() => onMarkRead?.(entry.id)}
+			ontogglesaved={() => onToggleSaved?.(entry.id)}
 		/>
 	{/each}
 

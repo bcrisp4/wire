@@ -6,7 +6,7 @@
 // "does NOT fire again while loading" without a real layout engine.
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
-import { render } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import EntryList from './EntryList.svelte';
 import type { Entry } from '$lib/types';
 
@@ -97,6 +97,51 @@ describe('EntryList load-more', () => {
 		// This assertion documents that contract.
 		FakeIO.lastCallback?.([{ isIntersecting: true }]);
 		expect(onLoadMore).toHaveBeenCalledTimes(2);
+	});
+
+	test('onExpand fires only when expanding, not on collapse', async () => {
+		const onExpand = vi.fn();
+		render(EntryList, {
+			entries: [makeEntry(1)],
+			loading: false,
+			hasMore: false,
+			onExpand
+		});
+
+		// EntryCard renders the title as a button. Clicking it expands the
+		// row; clicking again collapses. onExpand must fire on the first
+		// click only — we don't want to mark-read a card the user is
+		// closing.
+		const title = screen.getByRole('button', { name: 'Entry 1' });
+		await fireEvent.click(title);
+		expect(onExpand).toHaveBeenCalledTimes(1);
+		expect(onExpand).toHaveBeenCalledWith(1);
+
+		await fireEvent.click(title);
+		expect(onExpand).toHaveBeenCalledTimes(1);
+	});
+
+	test('onMarkRead and onToggleSaved propagate from EntryCard', async () => {
+		const onMarkRead = vi.fn();
+		const onToggleSaved = vi.fn();
+		render(EntryList, {
+			entries: [makeEntry(7)],
+			loading: false,
+			hasMore: false,
+			onMarkRead,
+			onToggleSaved
+		});
+
+		// Expand the row so EntryCard's action buttons render.
+		await fireEvent.click(screen.getByRole('button', { name: 'Entry 7' }));
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Mark read' }));
+		expect(onMarkRead).toHaveBeenCalledTimes(1);
+		expect(onMarkRead).toHaveBeenCalledWith(7);
+
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(onToggleSaved).toHaveBeenCalledTimes(1);
+		expect(onToggleSaved).toHaveBeenCalledWith(7);
 	});
 
 	test('does NOT call onLoadMore again while loading is true', async () => {
