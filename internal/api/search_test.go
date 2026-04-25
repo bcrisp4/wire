@@ -17,8 +17,8 @@ import (
 )
 
 // fakeStore is a test double that lets tests stub the EntryRepo. Only Entries()
-// is wired up; the other accessors return nil so anything else accidentally
-// invoked panics loudly.
+// is wired up; the other promoted methods come from the embedded store.Store,
+// so calling them with no concrete implementation set will panic loudly.
 type fakeStore struct {
 	store.Store
 	entries store.EntryRepo
