@@ -21,10 +21,6 @@ import (
 // TODO(unit-4): replace with jobs.QueueFeedPoll once it lands.
 const queueFeedPoll = "feed.poll"
 
-// Phase 0 is single-user; the schema is multi-user ready. Once auth lands this
-// becomes a request-scoped value.
-const defaultUserID = int64(1)
-
 // feedJSON is the wire shape for a feed. Field names match design.md §6.
 // etag and last_modified are omitted intentionally — they are internal HTTP
 // cache state, not API surface.
@@ -249,12 +245,6 @@ func enqueuePoll(ctx context.Context, q jobs.Queue, feedID int64) error {
 	}
 	_, err = q.Enqueue(ctx, queueFeedPoll, payload)
 	return err
-}
-
-func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(body)
 }
 
 func (s *Server) serverError(w http.ResponseWriter, r *http.Request, op string, err error) {

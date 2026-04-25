@@ -95,18 +95,20 @@ func (r *fakeFeedRepo) DueForPolling(context.Context, int64, int) ([]model.Feed,
 	return nil, nil
 }
 
-// fakeStore wraps a fakeFeedRepo to satisfy store.Store. Only Feeds() is
-// exercised by these tests; the rest panic if reached.
+// fakeStore wraps a fakeFeedRepo to satisfy store.Store. Feeds() returns the
+// real fake; Categories() returns nil (registerCategoryRoutes only stores the
+// repo in handler closures, so as long as no test hits /api/v1/categories
+// endpoints, nil is fine). The rest panic if reached.
 type fakeStore struct{ feeds *fakeFeedRepo }
 
-func (s *fakeStore) Users() store.UserRepo            { panic("Users not used") }
-func (s *fakeStore) Categories() store.CategoryRepo   { panic("Categories not used") }
-func (s *fakeStore) Feeds() store.FeedRepo            { return s.feeds }
-func (s *fakeStore) Entries() store.EntryRepo         { panic("Entries not used") }
-func (s *fakeStore) Icons() store.IconRepo            { panic("Icons not used") }
-func (s *fakeStore) Tombstones() store.TombstoneRepo  { panic("Tombstones not used") }
-func (s *fakeStore) Enclosures() store.EnclosureRepo  { panic("Enclosures not used") }
-func (s *fakeStore) Close() error                     { return nil }
+func (s *fakeStore) Users() store.UserRepo           { panic("Users not used") }
+func (s *fakeStore) Categories() store.CategoryRepo  { return nil }
+func (s *fakeStore) Feeds() store.FeedRepo           { return s.feeds }
+func (s *fakeStore) Entries() store.EntryRepo        { panic("Entries not used") }
+func (s *fakeStore) Icons() store.IconRepo           { panic("Icons not used") }
+func (s *fakeStore) Tombstones() store.TombstoneRepo { panic("Tombstones not used") }
+func (s *fakeStore) Enclosures() store.EnclosureRepo { panic("Enclosures not used") }
+func (s *fakeStore) Close() error                    { return nil }
 
 func newTestAPIServer(t *testing.T) (*Server, *fakeFeedRepo, *jobs.MemoryQueue) {
 	t.Helper()
