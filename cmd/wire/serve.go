@@ -38,15 +38,18 @@ func serve(ctx context.Context) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
-	// Heartbeat keeps the scheduler exercised so Phase 1 workers can register against
-	// a known-working scheduler without bootstrapping it themselves.
+	// Unit 4: feed.poll cron replaces the Phase 0 wire.heartbeat canary.
+	// The worker goroutine that drains this queue is wired in once Unit 0
+	// (store.New), Unit 1 (parser), and Unit 2 (fetcher) land — see the
+	// TODO block below.
 	if err := hb.Scheduler().Schedule(jobs.ScheduledTask{
-		Name:  jobs.QueueHeartbeat,
+		Name:  jobs.QueueFeedPoll,
 		Cron:  "* * * * *",
-		Queue: jobs.QueueHeartbeat,
+		Queue: jobs.QueueFeedPoll,
 	}); err != nil {
-		return fmt.Errorf("schedule heartbeat: %w", err)
+		return fmt.Errorf("schedule feed.poll: %w", err)
 	}
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -55,6 +58,12 @@ func serve(ctx context.Context) error {
 			log.Error("scheduler exited", "err", err)
 		}
 	}()
+
+	// TODO(unit-0/1/2): wire feedpoll.RunWorker once store.New, feedparse, and
+	// feedfetch land. feedpoll.Deps takes locally-defined interfaces so the
+	// store/parser/fetcher impls satisfy them structurally. The cron above
+	// fires a job on QueueFeedPoll; the worker calls feedpoll.EnqueueDue to
+	// fan it out into per-feed jobs.
 
 	spaFS, err := web.FS()
 	if err != nil {

@@ -19,6 +19,8 @@ var ErrNoJob = errors.New("jobs: no job available")
 // inlined as string literals at registration sites.
 const (
 	QueueHeartbeat = "wire.heartbeat"
+	// Unit 4: feed polling.
+	QueueFeedPoll = "feed.poll"
 )
 
 // Queue is the durable job queue contract.
