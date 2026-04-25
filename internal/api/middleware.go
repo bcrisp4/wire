@@ -26,10 +26,17 @@ func panicRecover(logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
-				if rec := recover(); rec != nil {
-					logger.Error("panic", "value", rec, "path", r.URL.Path)
-					http.Error(w, "internal error", http.StatusInternalServerError)
+				rec := recover()
+				if rec == nil {
+					return
 				}
+				// http.ErrAbortHandler is the documented way to bail out of a handler
+				// without logging — re-panic so net/http's own recovery handles it.
+				if rec == http.ErrAbortHandler {
+					panic(rec)
+				}
+				logger.Error("panic", "value", rec, "path", r.URL.Path)
+				http.Error(w, "internal error", http.StatusInternalServerError)
 			}()
 			next.ServeHTTP(w, r)
 		})

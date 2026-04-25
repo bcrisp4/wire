@@ -18,15 +18,16 @@ type Options struct {
 }
 
 type Server struct {
-	opts Options
-	http *http.Server
-	mu   sync.Mutex
-	ln   net.Listener
+	opts  Options
+	http  *http.Server
+	mu    sync.Mutex
+	ln    net.Listener
+	ready chan struct{}
 }
 
 func NewServer(opts Options) (*Server, error) {
 	if opts.Logger == nil {
-		opts.Logger = slog.Default()
+		return nil, errors.New("api: Options.Logger is required")
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/health", healthHandler())
@@ -42,6 +43,7 @@ func NewServer(opts Options) (*Server, error) {
 			Handler:           chain,
 			ReadHeaderTimeout: 10 * time.Second,
 		},
+		ready: make(chan struct{}),
 	}, nil
 }
 
@@ -53,6 +55,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	s.ln = ln
+	close(s.ready)
 	s.mu.Unlock()
 	s.opts.Logger.Info("listening", "addr", ln.Addr().String())
 
@@ -79,7 +82,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.http.Shutdown(ctx)
 }
 
-// Addr returns the listener's address. Only valid after Run has bound the listener.
+// Ready returns a channel that closes once the listener is bound.
+func (s *Server) Ready() <-chan struct{} { return s.ready }
+
+// Addr returns the bound listener's address. Empty until Ready is closed.
 func (s *Server) Addr() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

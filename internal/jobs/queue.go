@@ -15,6 +15,12 @@ import (
 // ErrNoJob is returned by Queue.Claim when no job is available.
 var ErrNoJob = errors.New("jobs: no job available")
 
+// Queue and scheduled-task names. New names should be added here rather than
+// inlined as string literals at registration sites.
+const (
+	QueueHeartbeat = "wire.heartbeat"
+)
+
 // Queue is the durable job queue contract.
 type Queue interface {
 	Enqueue(ctx context.Context, queue string, payload json.RawMessage) (int64, error)

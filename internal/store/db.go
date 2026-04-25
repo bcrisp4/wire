@@ -31,7 +31,9 @@ func Open(path string) (*sql.DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: ping: %w", err)
 	}
-	// Serialize writes via a single connection; readers also use it under WAL.
+	// SQLite serializes writes regardless of pool size. Cap at one connection so
+	// tests don't see SQLITE_BUSY churn on concurrent goroutine writes; under WAL
+	// this still gives concurrent readers via the same connection.
 	db.SetMaxOpenConns(1)
 	return db, nil
 }

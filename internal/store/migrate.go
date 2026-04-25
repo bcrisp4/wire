@@ -50,29 +50,31 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 }
 
 func loadMigrations(fsys fs.FS) ([]migration, error) {
-	entries, err := fs.ReadDir(fsys, ".")
+	names, err := fs.Glob(fsys, "*.sql")
 	if err != nil {
 		return nil, err
 	}
+	seen := map[int]string{}
 	var ms []migration
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sql") {
-			continue
-		}
+	for _, name := range names {
 		// Filename: NNNN_name.sql
-		under := strings.IndexByte(e.Name(), '_')
-		if under < 1 {
-			return nil, fmt.Errorf("malformed migration name %q", e.Name())
+		prefix, _, ok := strings.Cut(name, "_")
+		if !ok || prefix == "" {
+			return nil, fmt.Errorf("malformed migration name %q (want NNNN_name.sql)", name)
 		}
-		v, err := strconv.Atoi(e.Name()[:under])
+		v, err := strconv.Atoi(prefix)
 		if err != nil {
-			return nil, fmt.Errorf("non-numeric prefix in %q: %w", e.Name(), err)
+			return nil, fmt.Errorf("non-numeric prefix in %q: %w", name, err)
 		}
-		body, err := fs.ReadFile(fsys, e.Name())
+		if dup, ok := seen[v]; ok {
+			return nil, fmt.Errorf("duplicate migration version %d: %q and %q", v, dup, name)
+		}
+		seen[v] = name
+		body, err := fs.ReadFile(fsys, name)
 		if err != nil {
 			return nil, err
 		}
-		ms = append(ms, migration{version: v, name: e.Name(), sql: string(body)})
+		ms = append(ms, migration{version: v, name: name, sql: string(body)})
 	}
 	sort.Slice(ms, func(i, j int) bool { return ms[i].version < ms[j].version })
 	return ms, nil

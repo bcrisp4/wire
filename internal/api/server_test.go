@@ -14,37 +14,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// runTestServer starts the server in a goroutine and returns its address. The server stops when ctx is canceled.
+// runTestServer starts the server in a goroutine and returns its address.
+// The server stops when ctx is canceled.
 func runTestServer(t *testing.T, opts Options) string {
 	t.Helper()
 	if opts.Listen == "" {
 		opts.Listen = "127.0.0.1:0"
+	}
+	if opts.Logger == nil {
+		opts.Logger = slogDiscard()
 	}
 	srv, err := NewServer(opts)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-
-	addrCh := make(chan string, 1)
-	go func() {
-		// Poll briefly for the listener to bind so we can return the actual address.
-		go func() {
-			deadline := time.Now().Add(2 * time.Second)
-			for time.Now().Before(deadline) {
-				if a := srv.Addr(); a != "" {
-					addrCh <- a
-					return
-				}
-				time.Sleep(5 * time.Millisecond)
-			}
-			addrCh <- ""
-		}()
-		_ = srv.Run(ctx)
-	}()
-	addr := <-addrCh
-	require.NotEmpty(t, addr, "server failed to bind")
-	return addr
+	go func() { _ = srv.Run(ctx) }()
+	select {
+	case <-srv.Ready():
+	case <-time.After(2 * time.Second):
+		t.Fatal("server failed to bind within 2s")
+	}
+	return srv.Addr()
 }
 
 func TestServer_HealthThroughRouter(t *testing.T) {
@@ -58,20 +49,20 @@ func TestServer_HealthThroughRouter(t *testing.T) {
 }
 
 func TestServer_ShutdownIsGraceful(t *testing.T) {
-	srv, err := NewServer(Options{Listen: "127.0.0.1:0"})
+	srv, err := NewServer(Options{Listen: "127.0.0.1:0", Logger: slogDiscard()})
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { _ = srv.Run(ctx) }()
-	// Wait for bind.
-	deadline := time.Now().Add(time.Second)
-	for time.Now().Before(deadline) && srv.Addr() == "" {
-		time.Sleep(5 * time.Millisecond)
-	}
+	<-srv.Ready()
 	cancel()
-	// Shutdown via second call is also fine.
 	shutCtx, sc := context.WithTimeout(context.Background(), time.Second)
 	defer sc()
 	assert.NoError(t, srv.Shutdown(shutCtx))
+}
+
+func TestServer_RejectsMissingLogger(t *testing.T) {
+	_, err := NewServer(Options{Listen: "127.0.0.1:0"})
+	assert.Error(t, err)
 }
 
 func TestMiddleware_RecoversPanic(t *testing.T) {

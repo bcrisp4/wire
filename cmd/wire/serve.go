@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 
 	"github.com/bcrisp4/wire/internal/api"
 	"github.com/bcrisp4/wire/internal/config"
@@ -37,15 +38,19 @@ func serve(ctx context.Context) error {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
-	// Phase 0 canary: schedule a 1-minute heartbeat so Phase 1 has a working scheduler to extend.
+	// Heartbeat keeps the scheduler exercised so Phase 1 workers can register against
+	// a known-working scheduler without bootstrapping it themselves.
 	if err := hb.Scheduler().Schedule(jobs.ScheduledTask{
-		Name:  "wire.heartbeat",
+		Name:  jobs.QueueHeartbeat,
 		Cron:  "* * * * *",
-		Queue: "wire.heartbeat",
+		Queue: jobs.QueueHeartbeat,
 	}); err != nil {
 		return fmt.Errorf("schedule heartbeat: %w", err)
 	}
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		if err := hb.Scheduler().Run(ctx); err != nil && ctx.Err() == nil {
 			log.Error("scheduler exited", "err", err)
 		}
@@ -65,5 +70,7 @@ func serve(ctx context.Context) error {
 		return err
 	}
 	log.Info("starting", "listen", cfg.Listen, "db", cfg.DBPath, "extension", cfg.HonkerExtensionPath)
-	return srv.Run(ctx)
+	runErr := srv.Run(ctx)
+	wg.Wait() // ensure the scheduler goroutine returns before we close hb
+	return runErr
 }

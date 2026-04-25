@@ -1,17 +1,5 @@
 <script lang="ts">
-	import { api, ApiError } from '$lib/api';
-
-	let status = $state('checking…');
-
-	$effect(() => {
-		api
-			.health()
-			.then((r) => (status = r.status))
-			.catch((e: unknown) => {
-				if (e instanceof ApiError) status = `error ${e.status}: ${e.message}`;
-				else status = `error: ${String(e)}`;
-			});
-	});
+	let { data } = $props();
 </script>
 
 <main>
@@ -22,10 +10,8 @@
 
 	<section class="card">
 		<h2>Foundation health</h2>
-		<p>API status: <code>{status}</code></p>
-		<p class="muted">
-			Phase 0 foundation. Feed reading, search, and offline lands in Phase 1.
-		</p>
+		<p>API status: <code>{data.status}</code></p>
+		<p class="muted">Phase 0 foundation. Feed reading, search, and offline lands in Phase 1.</p>
 	</section>
 </main>
 
