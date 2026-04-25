@@ -51,7 +51,8 @@ follow-up batch that fans out per-resource workers (feeds API, entries API,
 search, OPML, river view, reader view, etc.) against this foundation.
 
 See [`design.md`](../design.md) for the full design spec, and the research
-notes in this directory for backend choices.
+notes in this directory for backend choices. See
+[`PHASE1C-NOTES.md`](./PHASE1C-NOTES.md) for deferred follow-ups.
 
 ## Package layout
 
