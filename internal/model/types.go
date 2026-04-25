@@ -55,36 +55,36 @@ type Feed struct {
 }
 
 type Entry struct {
-	ID          int64
-	FeedID      int64
-	UserID      int64
-	Hash        string
-	Title       string
-	URL         *string
-	CommentsURL *string
-	Author      *string
-	Summary     *string
-	Content     *string
-	PublishedAt *int64
-	ReadingTime int
-	Read        bool
-	ReadAt      *int64
-	Saved       bool
-	SavedAt     *int64
-	CreatedAt   int64
-	ChangedAt   int64
+	ID          int64   `json:"id"`
+	FeedID      int64   `json:"feed_id"`
+	UserID      int64   `json:"user_id"`
+	Hash        string  `json:"hash"`
+	Title       string  `json:"title"`
+	URL         *string `json:"url"`
+	CommentsURL *string `json:"comments_url"`
+	Author      *string `json:"author"`
+	Summary     *string `json:"summary"`
+	Content     *string `json:"content"`
+	PublishedAt *int64  `json:"published_at"`
+	ReadingTime int     `json:"reading_time"`
+	Read        bool    `json:"read"`
+	ReadAt      *int64  `json:"read_at"`
+	Saved       bool    `json:"saved"`
+	SavedAt     *int64  `json:"saved_at"`
+	CreatedAt   int64   `json:"created_at"`
+	ChangedAt   int64   `json:"changed_at"`
 }
 
 type EntryTombstone struct {
-	FeedID    int64
-	Hash      string
-	CreatedAt int64
+	FeedID    int64  `json:"feed_id"`
+	Hash      string `json:"hash"`
+	CreatedAt int64  `json:"created_at"`
 }
 
 type Enclosure struct {
-	ID       int64
-	EntryID  int64
-	URL      string
-	MimeType string
-	Size     int64
+	ID       int64  `json:"id"`
+	EntryID  int64  `json:"entry_id"`
+	URL      string `json:"url"`
+	MimeType string `json:"mime_type"`
+	Size     int64  `json:"size"`
 }
