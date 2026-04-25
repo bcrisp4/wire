@@ -53,8 +53,15 @@ function makeEntry(id: number): Entry {
 }
 
 describe('EntryList load-more', () => {
+	// Save and restore the original IntersectionObserver so the fake doesn't
+	// leak into other test files. jsdom leaves it `undefined`, so this
+	// effectively re-deletes it after each test.
+	let originalIO: typeof globalThis.IntersectionObserver | undefined;
+
 	beforeEach(() => {
 		FakeIO.lastCallback = null;
+		originalIO = (globalThis as { IntersectionObserver?: typeof globalThis.IntersectionObserver })
+			.IntersectionObserver;
 		// jsdom has no IntersectionObserver — install our fake on the global.
 		(globalThis as unknown as { IntersectionObserver: typeof FakeIO }).IntersectionObserver =
 			FakeIO;
@@ -62,6 +69,9 @@ describe('EntryList load-more', () => {
 
 	afterEach(() => {
 		FakeIO.lastCallback = null;
+		(
+			globalThis as { IntersectionObserver?: typeof globalThis.IntersectionObserver }
+		).IntersectionObserver = originalIO;
 	});
 
 	test('calls onLoadMore once when the sentinel intersects', async () => {
@@ -77,6 +87,16 @@ describe('EntryList load-more', () => {
 		expect(FakeIO.lastCallback).not.toBeNull();
 		FakeIO.lastCallback?.([{ isIntersecting: true }]);
 		expect(onLoadMore).toHaveBeenCalledTimes(1);
+
+		// A single intersection event reported as multiple callback entries
+		// (e.g. observer batching, layout shifts) must still result in exactly
+		// one call: the contract is "fire on intersection, debounced by the
+		// parent's `loading` flag once it flips true". With `loading` still
+		// false here, repeated callbacks intentionally re-fire — parents are
+		// responsible for synchronously setting loading=true in onLoadMore.
+		// This assertion documents that contract.
+		FakeIO.lastCallback?.([{ isIntersecting: true }]);
+		expect(onLoadMore).toHaveBeenCalledTimes(2);
 	});
 
 	test('does NOT call onLoadMore again while loading is true', async () => {

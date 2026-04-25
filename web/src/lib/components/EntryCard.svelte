@@ -11,10 +11,14 @@
 
 	let { entry, expanded, ontoggle, onmarkread, ontogglesaved }: Props = $props();
 
-	// `published_at` is Unix seconds (or null). Render as locale string.
-	let publishedLabel = $derived(
-		entry.published_at !== null ? new Date(entry.published_at * 1000).toLocaleString() : ''
+	// `published_at` is Unix seconds (or null). Render as locale string,
+	// but expose a machine-readable ISO-8601 timestamp on `<time datetime>`
+	// so screen readers and HTML parsers can interpret it correctly.
+	let publishedDate = $derived(
+		entry.published_at !== null ? new Date(entry.published_at * 1000) : null
 	);
+	let publishedLabel = $derived(publishedDate !== null ? publishedDate.toLocaleString() : '');
+	let publishedISO = $derived(publishedDate !== null ? publishedDate.toISOString() : '');
 </script>
 
 <article class="entry" class:read={entry.read} class:expanded>
@@ -30,7 +34,7 @@
 		</button>
 		<div class="meta">
 			{#if publishedLabel}
-				<time datetime={publishedLabel}>{publishedLabel}</time>
+				<time datetime={publishedISO}>{publishedLabel}</time>
 			{/if}
 			{#if entry.author}
 				<span class="author">{entry.author}</span>
