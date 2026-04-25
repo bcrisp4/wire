@@ -1,9 +1,10 @@
 // Package ratelimit provides per-host rate limiting and exponential backoff
 // helpers used by Wire's poll/extract workers.
 //
-// Per-host concurrency is a thin wrapper over Honker's fixed-window
-// honker_rate_limit_try SQL function. Backoff is pure-function math so the
-// worker loop can compute Job.Fail(retryAfterSec=...) from Job.Attempts.
+// Per-host rate limiting is a thin wrapper over Honker's fixed-window
+// honker_rate_limit_try SQL function. Backoff uses exponential growth with
+// full jitter so the worker loop can compute Job.Fail(retryAfterSec=...) from
+// Job.Attempts.
 package ratelimit
 
 import (
