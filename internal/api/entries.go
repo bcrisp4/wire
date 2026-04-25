@@ -13,8 +13,6 @@ import (
 	"github.com/bcrisp4/wire/internal/store"
 )
 
-const defaultUserID int64 = 1
-
 // registerEntryRoutes wires the entry-related REST endpoints on mux.
 // Kept package-private so tests and Server share one source of truth.
 func registerEntryRoutes(mux *http.ServeMux, repo store.EntriesAPI) {
@@ -150,12 +148,6 @@ type listResponse struct {
 	Total   int           `json:"total"`
 	Limit   int           `json:"limit"`
 	Offset  int           `json:"offset"`
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
 }
 
 func parseEntryQuery(r *http.Request) (store.EntryQuery, error) {
