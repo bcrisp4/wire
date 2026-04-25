@@ -110,6 +110,19 @@ func TestCategoryRepo_RenameMissingReturnsErrNotFound(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
+// TestCategoryRepo_RenameToSameNameSucceeds locks in SQLite's behavior that
+// UPDATE ... SET name = current_name WHERE id = X reports RowsAffected == 1
+// (i.e. a no-op rename is not mistaken for a missing row). If the driver ever
+// changes this, the Rename impl will need to disambiguate via a SELECT.
+func TestCategoryRepo_RenameToSameNameSucceeds(t *testing.T) {
+	s := newTestStoreCategories(t)
+	ctx := context.Background()
+
+	c := &model.Category{UserID: 1, Name: "News"}
+	require.NoError(t, s.Categories().Create(ctx, c))
+	assert.NoError(t, s.Categories().Rename(ctx, c.ID, "News"))
+}
+
 func TestCategoryRepo_Delete(t *testing.T) {
 	s := newTestStoreCategories(t)
 	ctx := context.Background()
