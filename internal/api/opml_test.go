@@ -215,6 +215,113 @@ func TestOPML_ImportRejectsMalformedXML(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestOPML_ImportTrimsWhitespace(t *testing.T) {
+	st := newFakeStore()
+	h := newOPMLTestHandler(t, st)
+
+	// Whitespace around xmlUrl, title, and category names: all must be
+	// normalised so duplicate detection works and persisted values are clean.
+	const doc = `<?xml version="1.0" encoding="UTF-8"?>
+<opml version="2.0">
+  <head><title>Test</title></head>
+  <body>
+    <outline title=" News ">
+      <outline type="rss" xmlUrl="  https://hn.example/rss  " title="  HN  " />
+    </outline>
+  </body>
+</opml>`
+	r := httptest.NewRequest("POST", "/api/v1/opml/import", strings.NewReader(doc))
+	r.Header.Set("Content-Type", "application/xml")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	feeds, _ := st.Feeds().List(context.Background(), 1)
+	require.Len(t, feeds, 1)
+	assert.Equal(t, "https://hn.example/rss", feeds[0].FeedURL)
+	assert.Equal(t, "HN", feeds[0].Title)
+	cats, _ := st.Categories().List(context.Background(), 1)
+	require.Len(t, cats, 1)
+	assert.Equal(t, "News", cats[0].Name)
+}
+
+func TestOPML_ImportConflictTreatedAsDuplicate(t *testing.T) {
+	// Repos that wrap UNIQUE violations as store.ErrConflict (the canonical
+	// API once Phase 1 storage units land) must still be mapped to the
+	// "skipped_duplicates" bucket rather than 500'd.
+	st := &errConflictStore{fakeStore: newFakeStore()}
+	h := newOPMLTestHandler(t, st)
+
+	r := httptest.NewRequest("POST", "/api/v1/opml/import", strings.NewReader(sampleOPML))
+	r.Header.Set("Content-Type", "application/xml")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	r2 := httptest.NewRequest("POST", "/api/v1/opml/import", strings.NewReader(sampleOPML))
+	r2.Header.Set("Content-Type", "application/xml")
+	w2 := httptest.NewRecorder()
+	h.ServeHTTP(w2, r2)
+	require.Equal(t, http.StatusOK, w2.Code, w2.Body.String())
+
+	var got map[string]int
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &got))
+	assert.Equal(t, 0, got["imported"])
+	assert.Equal(t, 2, got["skipped_duplicates"])
+}
+
+// errConflictStore wraps fakeStore so Create returns store.ErrConflict instead
+// of the legacy "UNIQUE constraint failed" text, exercising the typed-error
+// path in isConflict.
+type errConflictStore struct{ *fakeStore }
+
+func (s *errConflictStore) Categories() store.CategoryRepo {
+	return &errConflictCats{base: s.fakeStore.Categories().(*fakeCats)}
+}
+func (s *errConflictStore) Feeds() store.FeedRepo {
+	return &errConflictFeeds{base: s.fakeStore.Feeds().(*fakeFeeds)}
+}
+
+type errConflictCats struct{ base *fakeCats }
+
+func (c *errConflictCats) List(ctx context.Context, userID int64) ([]model.Category, error) {
+	return c.base.List(ctx, userID)
+}
+func (c *errConflictCats) Create(ctx context.Context, m *model.Category) error {
+	if err := c.base.Create(ctx, m); err != nil {
+		return fmt.Errorf("create category: %w", store.ErrConflict)
+	}
+	return nil
+}
+func (c *errConflictCats) Rename(context.Context, int64, string) error {
+	return errors.New("not used")
+}
+func (c *errConflictCats) Delete(context.Context, int64) error { return errors.New("not used") }
+
+type errConflictFeeds struct{ base *fakeFeeds }
+
+func (f *errConflictFeeds) List(ctx context.Context, userID int64) ([]model.Feed, error) {
+	return f.base.List(ctx, userID)
+}
+func (f *errConflictFeeds) Get(ctx context.Context, id int64) (*model.Feed, error) {
+	return f.base.Get(ctx, id)
+}
+func (f *errConflictFeeds) Create(ctx context.Context, m *model.Feed) error {
+	if err := f.base.Create(ctx, m); err != nil {
+		return fmt.Errorf("create feed: %w", store.ErrConflict)
+	}
+	return nil
+}
+func (f *errConflictFeeds) Update(ctx context.Context, m *model.Feed) error {
+	return f.base.Update(ctx, m)
+}
+func (f *errConflictFeeds) Delete(ctx context.Context, id int64) error {
+	return f.base.Delete(ctx, id)
+}
+func (f *errConflictFeeds) DueForPolling(ctx context.Context, now int64, limit int) ([]model.Feed, error) {
+	return f.base.DueForPolling(ctx, now, limit)
+}
+
 func TestOPML_Export(t *testing.T) {
 	st := newFakeStore()
 	require.NoError(t, st.Categories().Create(context.Background(), &model.Category{UserID: 1, Name: "News"}))

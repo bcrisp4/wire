@@ -1,9 +1,10 @@
 // Package opml parses and emits OPML 2.0 subscription documents.
 //
-// Wire uses OPML solely for feed import/export. Recognised outlines have a
-// non-empty xmlUrl and (optionally) a type of "rss" or "atom"; outlines with
-// no xmlUrl that contain children are treated as category groups. Anything
-// else (link bookmarks, free-form text outlines) is ignored.
+// Wire uses OPML solely for feed import/export. Any outline with a non-empty
+// xmlUrl is treated as a feed regardless of its type attribute (real-world
+// OPML files routinely omit type or use values beyond "rss"/"atom"). Outlines
+// with no xmlUrl that contain children are treated as category groups; all
+// other outlines (link bookmarks, free-form text) are ignored.
 package opml
 
 import (
