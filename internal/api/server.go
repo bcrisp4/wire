@@ -1,0 +1,96 @@
+package api
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"sync"
+	"time"
+)
+
+type Options struct {
+	Listen string
+	Logger *slog.Logger
+	SPA    http.Handler // optional: served on non-/api routes
+}
+
+type Server struct {
+	opts  Options
+	http  *http.Server
+	mu    sync.Mutex
+	ln    net.Listener
+	ready chan struct{}
+}
+
+func NewServer(opts Options) (*Server, error) {
+	if opts.Logger == nil {
+		return nil, errors.New("api: Options.Logger is required")
+	}
+	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/health", healthHandler())
+	if opts.SPA != nil {
+		mux.Handle("/", opts.SPA)
+	}
+
+	chain := requestLogger(opts.Logger)(panicRecover(opts.Logger)(mux))
+
+	return &Server{
+		opts: opts,
+		http: &http.Server{
+			Handler:           chain,
+			ReadHeaderTimeout: 10 * time.Second,
+		},
+		ready: make(chan struct{}),
+	}, nil
+}
+
+// Run blocks until ctx is canceled or the server fails.
+func (s *Server) Run(ctx context.Context) error {
+	ln, err := net.Listen("tcp", s.opts.Listen)
+	if err != nil {
+		return fmt.Errorf("api: listen: %w", err)
+	}
+	s.mu.Lock()
+	s.ln = ln
+	close(s.ready)
+	s.mu.Unlock()
+	s.opts.Logger.Info("listening", "addr", ln.Addr().String())
+
+	errCh := make(chan error, 1)
+	go func() {
+		err := s.http.Serve(ln)
+		if !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+		}
+		close(errCh)
+	}()
+	select {
+	case <-ctx.Done():
+		shutCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return s.http.Shutdown(shutCtx)
+	case err := <-errCh:
+		return err
+	}
+}
+
+// Shutdown gracefully terminates the server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.http.Shutdown(ctx)
+}
+
+// Ready returns a channel that closes once the listener is bound.
+func (s *Server) Ready() <-chan struct{} { return s.ready }
+
+// Addr returns the bound listener's address. Empty until Ready is closed.
+func (s *Server) Addr() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ln == nil {
+		return ""
+	}
+	return s.ln.Addr().String()
+}

@@ -1,0 +1,33 @@
+# Go
+/wire
+/dist
+*.test
+*.out
+coverage.txt
+
+# SQLite
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Node / SvelteKit
+web/node_modules/
+web/.svelte-kit/
+web/build/
+web/.env
+web/.env.local
+
+# Embedded SPA build artifacts: tracked so `git clone && make extension && go build` works without npm.
+# Re-generate locally with `cd web && npm run build`.
+
+# Honker extension build artifacts
+build/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
