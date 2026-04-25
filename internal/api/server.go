@@ -72,6 +72,9 @@ func NewServer(opts Options) (*Server, error) {
 		registerOPMLRoutes(mux, opts.Store, opts.Logger)
 	}
 	// Unit 10: opml end
+	// Unit 11: discovery
+	mux.Handle("POST /api/v1/feeds/discover", discoverHandler(http.DefaultClient))
+	// Unit 11: discovery end
 
 	if opts.SPA != nil {
 		mux.Handle("/", opts.SPA)
