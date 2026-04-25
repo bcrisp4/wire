@@ -139,7 +139,7 @@ func (r *entryRepo) Get(ctx context.Context, id int64) (*model.Entry, error) {
 	e, err := scanEntryFull(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, err
+			return nil, fmt.Errorf("entries get id=%d: %w", id, ErrNotFound)
 		}
 		return nil, fmt.Errorf("entries: %w", err)
 	}
@@ -197,8 +197,16 @@ func (r *entryRepo) UpdateState(ctx context.Context, id int64, read, saved *bool
 	sets = append(sets, "changed_at = strftime('%s','now')")
 	args = append(args, id)
 	query := "UPDATE entries SET " + strings.Join(sets, ", ") + " WHERE id = ?"
-	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+	res, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
 		return fmt.Errorf("entries: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("entries: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("entries update id=%d: %w", id, ErrNotFound)
 	}
 	return nil
 }

@@ -1,10 +1,10 @@
 package api
 
 import (
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,14 +15,14 @@ import (
 
 // registerEntryRoutes wires the entry-related REST endpoints on mux.
 // Kept package-private so tests and Server share one source of truth.
-func registerEntryRoutes(mux *http.ServeMux, repo store.EntriesAPI) {
-	mux.Handle("GET /api/v1/entries", listEntriesHandler(repo))
-	mux.Handle("GET /api/v1/entries/{id}", getEntryHandler(repo))
-	mux.Handle("PUT /api/v1/entries/{id}", updateEntryHandler(repo))
-	mux.Handle("PUT /api/v1/entries/read", bulkMarkReadHandler(repo))
+func registerEntryRoutes(mux *http.ServeMux, repo store.EntriesAPI, logger *slog.Logger) {
+	mux.Handle("GET /api/v1/entries", listEntriesHandler(repo, logger))
+	mux.Handle("GET /api/v1/entries/{id}", getEntryHandler(repo, logger))
+	mux.Handle("PUT /api/v1/entries/{id}", updateEntryHandler(repo, logger))
+	mux.Handle("PUT /api/v1/entries/read", bulkMarkReadHandler(repo, logger))
 }
 
-func listEntriesHandler(repo store.EntriesAPI) http.Handler {
+func listEntriesHandler(repo store.EntriesAPI, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q, err := parseEntryQuery(r)
 		if err != nil {
@@ -31,12 +31,14 @@ func listEntriesHandler(repo store.EntriesAPI) http.Handler {
 		}
 		entries, err := repo.List(r.Context(), q)
 		if err != nil {
-			http.Error(w, "list entries", http.StatusInternalServerError)
+			logger.Error("entries.list", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		total, err := repo.CountList(r.Context(), q)
 		if err != nil {
-			http.Error(w, "count entries", http.StatusInternalServerError)
+			logger.Error("entries.count", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		if entries == nil {
@@ -51,23 +53,22 @@ func listEntriesHandler(repo store.EntriesAPI) http.Handler {
 	})
 }
 
-func getEntryHandler(repo store.EntriesAPI) http.Handler {
+func getEntryHandler(repo store.EntriesAPI, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil {
-			http.Error(w, "invalid id", http.StatusBadRequest)
+		id, ok := parsePathID(w, r)
+		if !ok {
 			return
 		}
 		e, err := repo.Get(r.Context(), id)
-		if errors.Is(err, sql.ErrNoRows) {
+		switch {
+		case err == nil:
+			writeJSON(w, http.StatusOK, e)
+		case errors.Is(err, store.ErrNotFound):
 			http.NotFound(w, r)
-			return
+		default:
+			logger.Error("entries.get", "err", err, "id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
-		if err != nil {
-			http.Error(w, "get entry", http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, e)
 	})
 }
 
@@ -76,11 +77,10 @@ type updateEntryRequest struct {
 	Saved *bool `json:"saved"`
 }
 
-func updateEntryHandler(repo store.EntriesAPI) http.Handler {
+func updateEntryHandler(repo store.EntriesAPI, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-		if err != nil {
-			http.Error(w, "invalid id", http.StatusBadRequest)
+		id, ok := parsePathID(w, r)
+		if !ok {
 			return
 		}
 		var req updateEntryRequest
@@ -90,20 +90,32 @@ func updateEntryHandler(repo store.EntriesAPI) http.Handler {
 			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := repo.UpdateState(r.Context(), id, req.Read, req.Saved); err != nil {
-			http.Error(w, "update entry", http.StatusInternalServerError)
+		if err := dec.Decode(&struct{}{}); err != io.EOF {
+			http.Error(w, "invalid json: trailing data", http.StatusBadRequest)
+			return
+		}
+		err := repo.UpdateState(r.Context(), id, req.Read, req.Saved)
+		switch {
+		case err == nil:
+			// fall through to fetch+write
+		case errors.Is(err, store.ErrNotFound):
+			http.NotFound(w, r)
+			return
+		default:
+			logger.Error("entries.update", "err", err, "id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		e, err := repo.Get(r.Context(), id)
-		if errors.Is(err, sql.ErrNoRows) {
+		switch {
+		case err == nil:
+			writeJSON(w, http.StatusOK, e)
+		case errors.Is(err, store.ErrNotFound):
 			http.NotFound(w, r)
-			return
+		default:
+			logger.Error("entries.update.get", "err", err, "id", id)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
-		if err != nil {
-			http.Error(w, "get entry", http.StatusInternalServerError)
-			return
-		}
-		writeJSON(w, http.StatusOK, e)
 	})
 }
 
@@ -112,7 +124,7 @@ type bulkMarkReadRequest struct {
 	CategoryID *int64 `json:"category_id"`
 }
 
-func bulkMarkReadHandler(repo store.EntriesAPI) http.Handler {
+func bulkMarkReadHandler(repo store.EntriesAPI, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req bulkMarkReadRequest
 		// Empty body is allowed (marks all). Decode unconditionally so that
@@ -120,7 +132,15 @@ func bulkMarkReadHandler(repo store.EntriesAPI) http.Handler {
 		// treat io.EOF as "no body provided".
 		dec := json.NewDecoder(r.Body)
 		dec.DisallowUnknownFields()
-		if err := dec.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		switch err := dec.Decode(&req); {
+		case err == nil:
+			if err := dec.Decode(&struct{}{}); err != io.EOF {
+				http.Error(w, "invalid json: trailing data", http.StatusBadRequest)
+				return
+			}
+		case errors.Is(err, io.EOF):
+			// empty body: scope = all
+		default:
 			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -134,7 +154,8 @@ func bulkMarkReadHandler(repo store.EntriesAPI) http.Handler {
 			CategoryID: req.CategoryID,
 		})
 		if err != nil {
-			http.Error(w, "bulk mark read", http.StatusInternalServerError)
+			logger.Error("entries.bulk_mark_read", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

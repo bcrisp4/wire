@@ -217,6 +217,23 @@ func TestEntries_UpdateState_TogglesReadAndSavedAt(t *testing.T) {
 	assert.Nil(t, got.SavedAt)
 }
 
+func TestEntries_Get_UnknownIDReturnsErrNotFound(t *testing.T) {
+	db := openMigrated(t)
+	repo := &entryRepo{db: db}
+	_, err := repo.Get(context.Background(), 9999)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNotFound))
+}
+
+func TestEntries_UpdateState_UnknownIDReturnsErrNotFound(t *testing.T) {
+	db := openMigrated(t)
+	repo := &entryRepo{db: db}
+	yes := true
+	err := repo.UpdateState(context.Background(), 9999, &yes, nil)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNotFound))
+}
+
 func TestEntries_UpdateState_NoOpWhenBothNil(t *testing.T) {
 	db := openMigrated(t)
 	repo := &entryRepo{db: db}

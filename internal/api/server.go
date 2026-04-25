@@ -58,7 +58,7 @@ func NewServer(opts Options) (*Server, error) {
 	// Unit 8: entries
 	if opts.Store != nil {
 		if entries, ok := opts.Store.Entries().(store.EntriesAPI); ok {
-			registerEntryRoutes(mux, entries)
+			registerEntryRoutes(mux, entries, opts.Logger)
 		}
 	}
 	// end Unit 8: entries

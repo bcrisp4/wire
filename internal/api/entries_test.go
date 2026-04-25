@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -34,7 +35,7 @@ func newEntriesAPI(t *testing.T) (http.Handler, store.EntriesAPI, func()) {
 
 	repo := store.NewEntryRepo(db)
 	mux := http.NewServeMux()
-	registerEntryRoutes(mux, repo)
+	registerEntryRoutes(mux, repo, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return mux, repo, func() { _ = db.Close() }
 }
 
@@ -249,6 +250,30 @@ func TestEntries_PUT_BulkRead_AllowsEmptyBodyWithUnknownContentLength(t *testing
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	assert.Equal(t, http.StatusNoContent, w.Code, "body: %s", w.Body.String())
+}
+
+func TestEntries_PUT_RejectsTrailingJSON(t *testing.T) {
+	h, repo, cleanup := newEntriesAPI(t)
+	defer cleanup()
+	e := &model.Entry{FeedID: 1, UserID: 1, Hash: "a", Title: "A"}
+	mustInsert(t, repo, e)
+
+	r := httptest.NewRequest("PUT", "/api/v1/entries/"+strconv.FormatInt(e.ID, 10),
+		bytes.NewBufferString(`{"read":true}{"saved":false}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestEntries_PUT_UnknownIDReturns404(t *testing.T) {
+	h, _, cleanup := newEntriesAPI(t)
+	defer cleanup()
+	r := httptest.NewRequest("PUT", "/api/v1/entries/9999", bytes.NewBufferString(`{"read":true}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestEntries_PUT_RejectsInvalidJSON(t *testing.T) {
