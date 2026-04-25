@@ -8,6 +8,7 @@ import (
 
 	"github.com/bcrisp4/wire/internal/api"
 	"github.com/bcrisp4/wire/internal/config"
+	"github.com/bcrisp4/wire/internal/extract"
 	"github.com/bcrisp4/wire/internal/feedpoll"
 	"github.com/bcrisp4/wire/internal/jobs"
 	"github.com/bcrisp4/wire/internal/logger"
@@ -66,6 +67,20 @@ func serve(ctx context.Context) error {
 	// store/parser/fetcher impls satisfy them structurally. The cron above
 	// fires a job on QueueFeedPoll; the worker calls feedpoll.EnqueueDue to
 	// fan it out into per-feed jobs.
+
+	// Unit 5: entry.extract worker.
+	// No cron is needed — extract jobs are enqueued by the poll worker (Unit 4)
+	// when it inserts entries on feeds with crawler=1. We just register and
+	// drain the queue.
+	extractDeps := extract.Deps{
+		Queue:        hb.Queue(),
+		Logger:       log,
+		EntryFetcher: extract.NewSQLEntryFetcher(hb.RawDB()),
+		EntryUpdater: extract.NewSQLEntryUpdater(hb.RawDB()),
+	}
+	wg.Add(1)
+	go func() { defer wg.Done(); extract.RunWorker(ctx, extractDeps, "wire-extractor-1") }()
+	// Unit 5: end.
 
 	spaFS, err := web.FS()
 	if err != nil {
