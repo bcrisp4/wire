@@ -227,6 +227,30 @@ func TestEntries_PUT_BulkRead_ScopedByFeed(t *testing.T) {
 	assert.Equal(t, int64(2), got[0].FeedID)
 }
 
+func TestEntries_PUT_BulkRead_RejectsBothScopes(t *testing.T) {
+	h, _, cleanup := newEntriesAPI(t)
+	defer cleanup()
+
+	body := bytes.NewBufferString(`{"feed_id": 1, "category_id": 2}`)
+	r := httptest.NewRequest("PUT", "/api/v1/entries/read", body)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestEntries_PUT_BulkRead_AllowsEmptyBodyWithUnknownContentLength(t *testing.T) {
+	h, repo, cleanup := newEntriesAPI(t)
+	defer cleanup()
+	mustInsert(t, repo, &model.Entry{FeedID: 1, UserID: 1, Hash: "a", Title: "A"})
+
+	r := httptest.NewRequest("PUT", "/api/v1/entries/read", http.NoBody)
+	r.ContentLength = -1 // simulate chunked transfer
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusNoContent, w.Code, "body: %s", w.Body.String())
+}
+
 func TestEntries_PUT_RejectsInvalidJSON(t *testing.T) {
 	h, repo, cleanup := newEntriesAPI(t)
 	defer cleanup()
