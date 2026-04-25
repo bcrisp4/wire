@@ -9,7 +9,6 @@ import (
 	"fmt"
 
 	"github.com/bcrisp4/wire/internal/model"
-	"github.com/mattn/go-sqlite3"
 )
 
 type feedRepo struct {
@@ -139,11 +138,11 @@ func (r *feedRepo) Create(ctx context.Context, f *model.Feed) error {
 		nullable(f.ScraperRules), f.Disabled, f.IgnoreEntryUpdates,
 	).Scan(&f.ID, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
-		// UNIQUE(user_id, feed_url) violations surface to handlers as ErrConflict;
-		// inspect the driver-specific error code rather than parsing err.Error().
-		var sqliteErr sqlite3.Error
-		if errors.As(err, &sqliteErr) && sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique {
-			return fmt.Errorf("%w: feed_url=%q user_id=%d", ErrConflict, f.FeedURL, f.UserID)
+		// UNIQUE(user_id, feed_url) -> ErrConflict (HTTP 409). Bad category_id /
+		// icon_id FK references -> ErrInvalid (HTTP 400). Both surface via
+		// errors.Is so handlers don't parse driver error strings.
+		if mapped := mapSQLiteErr(err); mapped != err {
+			return fmt.Errorf("feeds.Create: %w", mapped)
 		}
 		return fmt.Errorf("feeds.Create: %w", err)
 	}
@@ -175,6 +174,10 @@ func (r *feedRepo) Update(ctx context.Context, f *model.Feed) error {
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: feed id=%d", ErrNotFound, f.ID)
+		}
+		// Bad category_id / icon_id FK references -> ErrInvalid (HTTP 400).
+		if mapped := mapSQLiteErr(err); mapped != err {
+			return fmt.Errorf("feeds.Update: %w", mapped)
 		}
 		return fmt.Errorf("feeds.Update: %w", err)
 	}

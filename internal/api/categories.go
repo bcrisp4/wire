@@ -119,14 +119,7 @@ func categoriesDelete(repo store.CategoryRepo, logger *slog.Logger) http.Handler
 // response has already been written.
 func decodeCategoryWrite(w http.ResponseWriter, r *http.Request) (categoryWriteReq, bool) {
 	var req categoryWriteReq
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
-		http.Error(w, "invalid JSON body", http.StatusBadRequest)
-		return req, false
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		http.Error(w, "invalid JSON body: trailing data", http.StatusBadRequest)
+	if !decodeJSONStrict(w, r, &req) {
 		return req, false
 	}
 	req.Name = strings.TrimSpace(req.Name)
@@ -135,6 +128,23 @@ func decodeCategoryWrite(w http.ResponseWriter, r *http.Request) (categoryWriteR
 		return req, false
 	}
 	return req, true
+}
+
+// decodeJSONStrict decodes a single JSON object from r.Body into dst, rejecting
+// unknown fields and any trailing data after the first object. On any decode
+// failure it writes a 400 response and returns false.
+func decodeJSONStrict(w http.ResponseWriter, r *http.Request, dst any) bool {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return false
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		http.Error(w, "invalid JSON body: trailing data", http.StatusBadRequest)
+		return false
+	}
+	return true
 }
 
 func parsePathID(w http.ResponseWriter, r *http.Request) (int64, bool) {

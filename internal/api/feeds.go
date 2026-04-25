@@ -98,8 +98,7 @@ type createFeedReq struct {
 
 func (s *Server) handleFeedsCreate(w http.ResponseWriter, r *http.Request) {
 	var req createFeedReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONStrict(w, r, &req) {
 		return
 	}
 	req.FeedURL = strings.TrimSpace(req.FeedURL)
@@ -118,10 +117,15 @@ func (s *Server) handleFeedsCreate(w http.ResponseWriter, r *http.Request) {
 		NextPollAt:   &now, // poll immediately
 	}
 	if err := s.opts.Store.Feeds().Create(r.Context(), f); err != nil {
-		// The store layer translates SQLite UNIQUE violations to ErrConflict,
-		// keeping driver-specific error parsing out of the handler.
+		// The store layer translates SQLite UNIQUE violations to ErrConflict and
+		// FOREIGN KEY violations to ErrInvalid, keeping driver-specific error
+		// parsing out of the handler.
 		if errors.Is(err, store.ErrConflict) {
 			http.Error(w, "feed_url already subscribed", http.StatusConflict)
+			return
+		}
+		if errors.Is(err, store.ErrInvalid) {
+			http.Error(w, "invalid category_id or icon_id", http.StatusBadRequest)
 			return
 		}
 		s.serverError(w, r, "feeds.create", err)
@@ -159,8 +163,7 @@ func (s *Server) handleFeedUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req updateFeedReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
+	if !decodeJSONStrict(w, r, &req) {
 		return
 	}
 	if req.Title != nil {
@@ -182,6 +185,10 @@ func (s *Server) handleFeedUpdate(w http.ResponseWriter, r *http.Request) {
 		f.IgnoreEntryUpdates = *req.IgnoreEntryUpdates
 	}
 	if err := s.opts.Store.Feeds().Update(r.Context(), f); err != nil {
+		if errors.Is(err, store.ErrInvalid) {
+			http.Error(w, "invalid category_id or icon_id", http.StatusBadRequest)
+			return
+		}
 		s.serverError(w, r, "feeds.update", err)
 		return
 	}

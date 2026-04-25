@@ -171,6 +171,33 @@ func TestFeedRepo_DueForPollingSkipsDisabledAndErrored(t *testing.T) {
 	assert.ElementsMatch(t, []string{"a", "b"}, urls)
 }
 
+func TestFeedRepo_CreateBadCategoryFKReturnsErrInvalid(t *testing.T) {
+	r := newTestFeedRepo(t)
+	bad := int64(9999)
+	f := &model.Feed{
+		UserID:       1,
+		CategoryID:   &bad,
+		Title:        "x",
+		FeedURL:      "https://example.com/rss",
+		PollInterval: 3600,
+	}
+	err := r.Create(context.Background(), f)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrInvalid), "expected ErrInvalid, got %v", err)
+}
+
+func TestFeedRepo_UpdateBadCategoryFKReturnsErrInvalid(t *testing.T) {
+	r := newTestFeedRepo(t)
+	ctx := context.Background()
+	f := &model.Feed{UserID: 1, Title: "x", FeedURL: "https://example.com/rss", PollInterval: 3600}
+	require.NoError(t, r.Create(ctx, f))
+	bad := int64(9999)
+	f.CategoryID = &bad
+	err := r.Update(ctx, f)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrInvalid), "expected ErrInvalid, got %v", err)
+}
+
 func TestFeedRepo_DueForPollingRespectsLimit(t *testing.T) {
 	r := newTestFeedRepo(t)
 	ctx := context.Background()

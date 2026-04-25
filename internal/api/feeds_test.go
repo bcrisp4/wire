@@ -189,6 +189,26 @@ func TestFeeds_CreateRequiresFeedURL(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestFeeds_CreateRejectsUnknownField(t *testing.T) {
+	srv, _, _ := newTestAPIServer(t)
+	r := httptest.NewRequest("POST", "/api/v1/feeds",
+		bytes.NewBufferString(`{"feed_url":"https://x/rss","bogus":1}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestFeeds_CreateRejectsTrailingJSON(t *testing.T) {
+	srv, _, _ := newTestAPIServer(t)
+	r := httptest.NewRequest("POST", "/api/v1/feeds",
+		bytes.NewBufferString(`{"feed_url":"https://x/rss"}{"feed_url":"https://y/rss"}`))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	srv.http.Handler.ServeHTTP(w, r)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestFeeds_CreateRejectsDuplicate(t *testing.T) {
 	srv, _, _ := newTestAPIServer(t)
 	body := map[string]any{"feed_url": "https://example.com/rss"}
