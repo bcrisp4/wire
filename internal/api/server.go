@@ -46,6 +46,13 @@ func NewServer(opts Options) (*Server, error) {
 		registerCategoryRoutes(mux, opts.Store.Categories(), opts.Logger)
 	}
 	// End Unit 7
+	// Unit 8: entries
+	if opts.Store != nil {
+		if entries, ok := opts.Store.Entries().(store.EntriesAPI); ok {
+			registerEntryRoutes(mux, entries)
+		}
+	}
+	// end Unit 8: entries
 
 	if opts.SPA != nil {
 		mux.Handle("/", opts.SPA)
