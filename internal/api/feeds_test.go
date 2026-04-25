@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -58,7 +57,7 @@ func (r *fakeFeedRepo) Create(_ context.Context, f *model.Feed) error {
 	defer r.mu.Unlock()
 	for _, existing := range r.feeds {
 		if existing.UserID == f.UserID && existing.FeedURL == f.FeedURL {
-			return errors.New("UNIQUE constraint failed: feeds.user_id, feeds.feed_url")
+			return store.ErrConflict
 		}
 	}
 	r.next++

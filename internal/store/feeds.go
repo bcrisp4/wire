@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/bcrisp4/wire/internal/model"
+	"github.com/mattn/go-sqlite3"
 )
 
 type feedRepo struct {
@@ -138,6 +139,12 @@ func (r *feedRepo) Create(ctx context.Context, f *model.Feed) error {
 		nullable(f.ScraperRules), f.Disabled, f.IgnoreEntryUpdates,
 	).Scan(&f.ID, &f.CreatedAt, &f.UpdatedAt)
 	if err != nil {
+		// UNIQUE(user_id, feed_url) violations surface to handlers as ErrConflict;
+		// inspect the driver-specific error code rather than parsing err.Error().
+		var sqliteErr sqlite3.Error
+		if errors.As(err, &sqliteErr) && sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique {
+			return fmt.Errorf("%w: feed_url=%q user_id=%d", ErrConflict, f.FeedURL, f.UserID)
+		}
 		return fmt.Errorf("feeds.Create: %w", err)
 	}
 	return nil
@@ -191,7 +198,9 @@ func (r *feedRepo) Delete(ctx context.Context, id int64) error {
 
 // DueForPolling returns feeds whose next_poll_at has passed, excluding
 // disabled feeds and those past the error-count circuit breaker.
-// Ordering matches the partial index idx_feeds_next_poll for index-only scans.
+// ORDER BY next_poll_at matches the partial index idx_feeds_next_poll so
+// SQLite avoids a sort. The index isn't covering, so SQLite still does a
+// table lookup per row to fetch the remaining columns.
 func (r *feedRepo) DueForPolling(ctx context.Context, now int64, limit int) ([]model.Feed, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT `+feedColumns+` FROM feeds

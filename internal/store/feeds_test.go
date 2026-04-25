@@ -71,7 +71,7 @@ func TestFeedRepo_UpdateChangesUpdatedAt(t *testing.T) {
 	originalUpdatedAt := f.UpdatedAt
 	originalCreatedAt := f.CreatedAt
 
-	// Force a different unixepoch tick by setting updated_at to 0 first.
+	// Force updated_at to an earlier value so the subsequent unixepoch() bump is observable.
 	_, err := r.db.ExecContext(ctx, `UPDATE feeds SET updated_at = ? WHERE id = ?`, originalUpdatedAt-10, f.ID)
 	require.NoError(t, err)
 

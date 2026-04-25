@@ -122,9 +122,9 @@ func (s *Server) handleFeedsCreate(w http.ResponseWriter, r *http.Request) {
 		NextPollAt:   &now, // poll immediately
 	}
 	if err := s.opts.Store.Feeds().Create(r.Context(), f); err != nil {
-		// SQLite UNIQUE(user_id, feed_url) violations come back as a generic error;
-		// match on the canonical SQLite text since we don't import sqlite3 here.
-		if strings.Contains(err.Error(), "UNIQUE") {
+		// The store layer translates SQLite UNIQUE violations to ErrConflict,
+		// keeping driver-specific error parsing out of the handler.
+		if errors.Is(err, store.ErrConflict) {
 			http.Error(w, "feed_url already subscribed", http.StatusConflict)
 			return
 		}
