@@ -61,10 +61,14 @@ func serve(ctx context.Context) error {
 		return err
 	}
 
+	// Unit 0: storage bootstrap. Store wraps Honker's *sql.DB; Honker still owns
+	// the connection lifecycle, so Store.Close is a no-op.
 	srv, err := api.NewServer(api.Options{
 		Listen: cfg.Listen,
 		Logger: log,
 		SPA:    api.SPAHandler(spaFS),
+		Store:  store.New(hb.RawDB()),
+		Queue:  hb.Queue(),
 	})
 	if err != nil {
 		return err
