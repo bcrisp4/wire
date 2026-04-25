@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -33,11 +34,17 @@ func registerOPMLRoutes(mux *http.ServeMux, st store.Store, log *slog.Logger) {
 
 func opmlImportHandler(st store.Store, log *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := readOPMLBody(r)
+		// Cap the entire request body before any parsing. This guards both raw
+		// and multipart paths; ParseMultipartForm only enforces an in-memory
+		// limit and would otherwise spill unbounded data to disk.
+		r.Body = http.MaxBytesReader(w, r.Body, maxOPMLBytes)
+
+		body, cleanup, err := readOPMLBody(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		defer cleanup()
 		defer body.Close()
 
 		subs, err := opml.Parse(body)
@@ -87,35 +94,54 @@ func opmlExportHandler(st store.Store, log *slog.Logger) http.Handler {
 			subs = append(subs, s)
 		}
 
+		// Buffer the encoded OPML so a serializer error returns a clean 500
+		// instead of a half-written 200 download. Subscription lists are tiny
+		// (typically KBs) so the extra allocation is harmless.
+		var buf bytes.Buffer
+		if err := opml.Write(&buf, subs); err != nil {
+			log.Error("opml export: write", "err", err)
+			http.Error(w, "export failed", http.StatusInternalServerError)
+			return
+		}
 		// text/x-opml is the de-facto OPML MIME but "+xml" advertises the
 		// underlying format, satisfying generic XML clients (and our tests).
 		w.Header().Set("Content-Type", "text/x-opml+xml; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="wire-subscriptions.opml"`)
-		if err := opml.Write(w, subs); err != nil {
-			log.Error("opml export: write", "err", err)
-		}
+		_, _ = w.Write(buf.Bytes())
 	})
 }
 
 // readOPMLBody returns the raw OPML document, sniffing both raw-body and
-// multipart submissions. The caller is responsible for closing the result.
-func readOPMLBody(r *http.Request) (io.ReadCloser, error) {
+// multipart submissions. The cleanup function removes any temp files
+// ParseMultipartForm may have spilled to disk and should be deferred by the
+// caller alongside Close on the body.
+func readOPMLBody(r *http.Request) (io.ReadCloser, func(), error) {
+	noop := func() {}
 	ct, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil {
 		ct = "" // fall through to default raw-body handling
 	}
 	if strings.HasPrefix(ct, "multipart/") {
+		// maxMemory is the in-memory portion; anything larger spills to a
+		// temp file. The overall body size is already capped by the
+		// MaxBytesReader applied in the handler.
 		if err := r.ParseMultipartForm(maxOPMLBytes); err != nil {
-			return nil, fmt.Errorf("opml: parse multipart: %w", err)
+			return nil, noop, fmt.Errorf("opml: parse multipart: %w", err)
+		}
+		cleanup := func() {
+			if r.MultipartForm != nil {
+				_ = r.MultipartForm.RemoveAll()
+			}
 		}
 		f, _, err := r.FormFile("file")
 		if err != nil {
-			return nil, fmt.Errorf("opml: missing 'file' field: %w", err)
+			return nil, cleanup, fmt.Errorf("opml: missing 'file' field: %w", err)
 		}
-		return f, nil
+		return f, cleanup, nil
 	}
-	// Raw body — XML, OPML, or unspecified.
-	return io.NopCloser(http.MaxBytesReader(nil, r.Body, maxOPMLBytes)), nil
+	// Raw body — XML, OPML, or unspecified. Body is already wrapped in a
+	// MaxBytesReader by the handler.
+	return r.Body, noop, nil
 }
 
 type importResult struct {
@@ -138,44 +164,65 @@ func importSubscriptions(ctx context.Context, st store.Store, subs []opml.Subscr
 
 	now := time.Now().Unix()
 	for _, s := range subs {
-		if strings.TrimSpace(s.FeedURL) == "" {
+		feedURL := strings.TrimSpace(s.FeedURL)
+		if feedURL == "" {
 			continue
 		}
+		categoryName := strings.TrimSpace(s.Category)
 		var categoryID *int64
-		if s.Category != "" {
-			id, ok := catIDByName[s.Category]
+		if categoryName != "" {
+			id, ok := catIDByName[categoryName]
 			if !ok {
-				cat := &model.Category{UserID: opmlUserID, Name: s.Category}
+				cat := &model.Category{UserID: opmlUserID, Name: categoryName}
 				if err := st.Categories().Create(ctx, cat); err != nil {
-					return result, fmt.Errorf("opml: create category %q: %w", s.Category, err)
+					// Another importer / a concurrent request could have
+					// created this category in between our List and Create.
+					// Re-list and retry the lookup so we coalesce instead of
+					// failing.
+					if isConflict(err) {
+						refreshed, lerr := st.Categories().List(ctx, opmlUserID)
+						if lerr != nil {
+							return result, fmt.Errorf("opml: relist categories: %w", lerr)
+						}
+						for _, c := range refreshed {
+							catIDByName[c.Name] = c.ID
+						}
+						id, ok = catIDByName[categoryName]
+						if !ok {
+							return result, fmt.Errorf("opml: category %q lost to race", categoryName)
+						}
+					} else {
+						return result, fmt.Errorf("opml: create category %q: %w", categoryName, err)
+					}
+				} else {
+					id = cat.ID
+					catIDByName[categoryName] = id
+					result.CategoriesCreated++
 				}
-				id = cat.ID
-				catIDByName[s.Category] = id
-				result.CategoriesCreated++
 			}
 			categoryID = &id
 		}
 
-		title := s.Title
+		title := strings.TrimSpace(s.Title)
 		if title == "" {
-			title = s.FeedURL
+			title = feedURL
 		}
 		feed := &model.Feed{
 			UserID:       opmlUserID,
 			CategoryID:   categoryID,
 			Title:        title,
-			FeedURL:      s.FeedURL,
-			SiteURL:      stringPtr(s.SiteURL),
+			FeedURL:      feedURL,
+			SiteURL:      stringPtr(strings.TrimSpace(s.SiteURL)),
 			PollInterval: 3600,
 			NextPollAt:   &now,
 			Crawler:      false,
 		}
 		if err := st.Feeds().Create(ctx, feed); err != nil {
-			if isUniqueViolation(err) {
+			if isConflict(err) {
 				result.SkippedDuplicates++
 				continue
 			}
-			return result, fmt.Errorf("opml: create feed %q: %w", s.FeedURL, err)
+			return result, fmt.Errorf("opml: create feed %q: %w", feedURL, err)
 		}
 		result.Imported++
 	}
@@ -189,11 +236,14 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-// isUniqueViolation matches go-sqlite3's "UNIQUE constraint failed: ..."
-// message and the equivalent string our in-memory test fakes produce. We
-// match the message rather than the typed error so handlers don't depend on
-// the driver package.
-func isUniqueViolation(err error) bool {
+// isConflict reports whether err represents a uniqueness conflict from the
+// store. We prefer the typed sentinel store.ErrConflict but fall back to
+// substring matching the underlying driver/fake error text so this code keeps
+// working until every repo wraps with the sentinel.
+func isConflict(err error) bool {
+	if errors.Is(err, store.ErrConflict) {
+		return true
+	}
 	for e := err; e != nil; e = errors.Unwrap(e) {
 		if strings.Contains(strings.ToLower(e.Error()), "unique constraint") {
 			return true
