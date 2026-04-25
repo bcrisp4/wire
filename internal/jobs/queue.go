@@ -21,6 +21,8 @@ const (
 	QueueHeartbeat = "wire.heartbeat"
 	// Unit 4: feed polling.
 	QueueFeedPoll = "feed.poll"
+	// Unit 5: content extraction.
+	QueueEntryExtract = "entry.extract"
 )
 
 // Queue is the durable job queue contract.
