@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -116,14 +117,18 @@ type bulkMarkReadRequest struct {
 func bulkMarkReadHandler(repo store.EntriesAPI) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req bulkMarkReadRequest
-		// Empty body is allowed (marks all). Decode but tolerate EOF.
-		if r.ContentLength != 0 {
-			dec := json.NewDecoder(r.Body)
-			dec.DisallowUnknownFields()
-			if err := dec.Decode(&req); err != nil {
-				http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
-				return
-			}
+		// Empty body is allowed (marks all). Decode unconditionally so that
+		// chunked requests (ContentLength == -1) are handled correctly, and
+		// treat io.EOF as "no body provided".
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			http.Error(w, "invalid json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.FeedID != nil && req.CategoryID != nil {
+			http.Error(w, "feed_id and category_id are mutually exclusive", http.StatusBadRequest)
+			return
 		}
 		err := repo.BulkMarkRead(r.Context(), store.BulkReadScope{
 			UserID:     defaultUserID,
@@ -171,7 +176,7 @@ func parseEntryQuery(r *http.Request) (store.EntryQuery, error) {
 	}
 	saved, err := parseOptionalBool(v.Get("saved"))
 	if err != nil {
-		return q, errors.New("invalid saved (want true|false)")
+		return q, errors.New("invalid saved (want true|false|1|0)")
 	}
 	q.Saved = saved
 	if q.FeedID, err = parseOptionalInt64(v.Get("feed_id")); err != nil {
