@@ -1,13 +1,6 @@
 package store
 
-import (
-	"database/sql"
-	"errors"
-)
-
-// ErrNotFound is returned when a Get/Update targets a row that does not exist.
-// Repos wrap this with fmt.Errorf("%w: ...") so callers can errors.Is-test it.
-var ErrNotFound = errors.New("store: not found")
+import "database/sql"
 
 // sqliteStore is the concrete Store backed by a single *sql.DB. The DB is
 // owned by Honker (jobs.HonkerBackend.RawDB()); Store.Close is a no-op so the
