@@ -22,9 +22,9 @@ import (
 	"github.com/bcrisp4/wire/internal/store"
 )
 
-// fakeStore implements store.Store with the only repos OPML handlers need.
+// opmlFakeStore implements store.Store with the only repos OPML handlers need.
 // Other repos return nil and are unused by the OPML endpoints.
-type fakeStore struct {
+type opmlFakeStore struct {
 	mu         sync.Mutex
 	cats       []model.Category
 	feeds      []model.Feed
@@ -32,20 +32,20 @@ type fakeStore struct {
 	nextFeedID int64
 }
 
-func newFakeStore() *fakeStore {
-	return &fakeStore{nextCatID: 1, nextFeedID: 1}
+func newFakeStore() *opmlFakeStore {
+	return &opmlFakeStore{nextCatID: 1, nextFeedID: 1}
 }
 
-func (s *fakeStore) Users() store.UserRepo           { return nil }
-func (s *fakeStore) Categories() store.CategoryRepo  { return &fakeCats{s: s} }
-func (s *fakeStore) Feeds() store.FeedRepo           { return &fakeFeeds{s: s} }
-func (s *fakeStore) Entries() store.EntryRepo        { return nil }
-func (s *fakeStore) Icons() store.IconRepo           { return nil }
-func (s *fakeStore) Tombstones() store.TombstoneRepo { return nil }
-func (s *fakeStore) Enclosures() store.EnclosureRepo { return nil }
-func (s *fakeStore) Close() error                    { return nil }
+func (s *opmlFakeStore) Users() store.UserRepo           { return nil }
+func (s *opmlFakeStore) Categories() store.CategoryRepo  { return &fakeCats{s: s} }
+func (s *opmlFakeStore) Feeds() store.FeedRepo           { return &fakeFeeds{s: s} }
+func (s *opmlFakeStore) Entries() store.EntryRepo        { return nil }
+func (s *opmlFakeStore) Icons() store.IconRepo           { return nil }
+func (s *opmlFakeStore) Tombstones() store.TombstoneRepo { return nil }
+func (s *opmlFakeStore) Enclosures() store.EnclosureRepo { return nil }
+func (s *opmlFakeStore) Close() error                    { return nil }
 
-type fakeCats struct{ s *fakeStore }
+type fakeCats struct{ s *opmlFakeStore }
 
 func (c *fakeCats) List(_ context.Context, userID int64) ([]model.Category, error) {
 	c.s.mu.Lock()
@@ -74,7 +74,7 @@ func (c *fakeCats) Create(_ context.Context, m *model.Category) error {
 func (c *fakeCats) Rename(context.Context, int64, string) error { return errors.New("not used") }
 func (c *fakeCats) Delete(context.Context, int64) error         { return errors.New("not used") }
 
-type fakeFeeds struct{ s *fakeStore }
+type fakeFeeds struct{ s *opmlFakeStore }
 
 func (f *fakeFeeds) List(_ context.Context, userID int64) ([]model.Feed, error) {
 	f.s.mu.Lock()
@@ -249,7 +249,7 @@ func TestOPML_ImportConflictTreatedAsDuplicate(t *testing.T) {
 	// Repos that wrap UNIQUE violations as store.ErrConflict (the canonical
 	// API once Phase 1 storage units land) must still be mapped to the
 	// "skipped_duplicates" bucket rather than 500'd.
-	st := &errConflictStore{fakeStore: newFakeStore()}
+	st := &errConflictStore{opmlFakeStore: newFakeStore()}
 	h := newOPMLTestHandler(t, st)
 
 	r := httptest.NewRequest("POST", "/api/v1/opml/import", strings.NewReader(sampleOPML))
@@ -270,16 +270,16 @@ func TestOPML_ImportConflictTreatedAsDuplicate(t *testing.T) {
 	assert.Equal(t, 2, got["skipped_duplicates"])
 }
 
-// errConflictStore wraps fakeStore so Create returns store.ErrConflict instead
+// errConflictStore wraps opmlFakeStore so Create returns store.ErrConflict instead
 // of the legacy "UNIQUE constraint failed" text, exercising the typed-error
 // path in isConflict.
-type errConflictStore struct{ *fakeStore }
+type errConflictStore struct{ *opmlFakeStore }
 
 func (s *errConflictStore) Categories() store.CategoryRepo {
-	return &errConflictCats{base: s.fakeStore.Categories().(*fakeCats)}
+	return &errConflictCats{base: s.opmlFakeStore.Categories().(*fakeCats)}
 }
 func (s *errConflictStore) Feeds() store.FeedRepo {
-	return &errConflictFeeds{base: s.fakeStore.Feeds().(*fakeFeeds)}
+	return &errConflictFeeds{base: s.opmlFakeStore.Feeds().(*fakeFeeds)}
 }
 
 type errConflictCats struct{ base *fakeCats }
