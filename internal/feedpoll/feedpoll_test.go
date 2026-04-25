@@ -419,7 +419,7 @@ func TestRunWorker_TickPayloadFansOutDueFeeds(t *testing.T) {
 
 	queue := jobs.NewMemoryQueue()
 	// Cron-fired job: payload is the canonical tick marker.
-	_, err := queue.Enqueue(context.Background(), QueueName, TickPayload)
+	_, err := queue.Enqueue(context.Background(), QueueName, TickPayload())
 	require.NoError(t, err)
 
 	deps := Deps{

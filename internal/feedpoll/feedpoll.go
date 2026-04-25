@@ -186,10 +186,19 @@ type pollPayload struct {
 	FeedID int64  `json:"feed_id,omitempty"`
 }
 
-// TickPayload is the canonical payload for the cron-fired dispatcher tick.
-// cmd/wire passes this as the ScheduledTask.Payload so the worker can
-// distinguish a fan-out tick from a per-feed poll job.
-var TickPayload = json.RawMessage(`{"type":"tick"}`)
+// tickPayloadBytes is the canonical payload for the cron-fired dispatcher tick.
+// Exposed via TickPayload() which returns a fresh copy so callers cannot mutate
+// shared package state.
+var tickPayloadBytes = []byte(`{"type":"tick"}`)
+
+// TickPayload returns a fresh copy of the canonical cron-tick payload.
+// cmd/wire passes this as ScheduledTask.Payload so the worker can distinguish
+// a fan-out tick from a per-feed poll job.
+func TickPayload() json.RawMessage {
+	out := make(json.RawMessage, len(tickPayloadBytes))
+	copy(out, tickPayloadBytes)
+	return out
+}
 
 // EnqueueDue enqueues a feed.poll job for every feed whose next_poll_at <= now.
 // Called by the cron handler (or directly in tests).
@@ -280,8 +289,13 @@ func processJob(ctx context.Context, deps Deps, job *jobs.Job) error {
 	var p pollPayload
 	if err := json.Unmarshal(job.Payload, &p); err != nil {
 		// Malformed payload: ack and drop so it doesn't requeue forever.
-		_ = job.Ack(ctx)
-		return fmt.Errorf("feedpoll: unmarshal payload: %w", err)
+		// Surface any Ack failure alongside the unmarshal error so a backend
+		// hiccup doesn't silently leave the job in an indeterminate state.
+		unmarshalErr := fmt.Errorf("feedpoll: unmarshal payload: %w", err)
+		if ackErr := job.Ack(ctx); ackErr != nil {
+			return errors.Join(unmarshalErr, fmt.Errorf("feedpoll: ack malformed payload: %w", ackErr))
+		}
+		return unmarshalErr
 	}
 
 	// Tick: fan out per-feed jobs for everything currently due, then ack.
@@ -294,14 +308,20 @@ func processJob(ctx context.Context, deps Deps, job *jobs.Job) error {
 
 	if p.FeedID == 0 {
 		// Defensive: a non-tick payload with no feed_id is malformed; drop.
-		_ = job.Ack(ctx)
-		return fmt.Errorf("feedpoll: missing feed_id in payload")
+		malformedErr := errors.New("feedpoll: missing feed_id in payload")
+		if ackErr := job.Ack(ctx); ackErr != nil {
+			return errors.Join(malformedErr, fmt.Errorf("feedpoll: ack malformed payload: %w", ackErr))
+		}
+		return malformedErr
 	}
 
 	feed, err := deps.Feeds.Get(ctx, p.FeedID)
 	if err != nil {
-		_ = job.Ack(ctx)
-		return fmt.Errorf("feedpoll: get feed %d: %w", p.FeedID, err)
+		getErr := fmt.Errorf("feedpoll: get feed %d: %w", p.FeedID, err)
+		if ackErr := job.Ack(ctx); ackErr != nil {
+			return errors.Join(getErr, fmt.Errorf("feedpoll: ack after get failure: %w", ackErr))
+		}
+		return getErr
 	}
 
 	// Disabled or persistently failing: ack and skip.
@@ -445,11 +465,14 @@ func isDuplicateEntryErr(err error) bool {
 	return strings.Contains(s, "UNIQUE constraint failed") || strings.Contains(s, "constraint failed: UNIQUE")
 }
 
-// hostOf returns the lower-cased host of a URL, or the URL itself if unparsable.
+// hostOf returns the lower-cased hostname of a URL (no port), or the URL
+// itself if unparsable. Stripping the port keeps per-host concurrency buckets
+// stable across explicit-vs-default port forms (e.g. example.com vs
+// example.com:443).
 func hostOf(rawurl string) string {
 	u, err := url.Parse(rawurl)
-	if err != nil || u.Host == "" {
+	if err != nil || u.Hostname() == "" {
 		return rawurl
 	}
-	return strings.ToLower(u.Host)
+	return strings.ToLower(u.Hostname())
 }

@@ -47,7 +47,7 @@ func serve(ctx context.Context) error {
 		Name:    jobs.QueueFeedPoll,
 		Cron:    "* * * * *",
 		Queue:   jobs.QueueFeedPoll,
-		Payload: feedpoll.TickPayload,
+		Payload: feedpoll.TickPayload(),
 	}); err != nil {
 		return fmt.Errorf("schedule feed.poll: %w", err)
 	}
