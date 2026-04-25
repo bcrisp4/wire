@@ -6,10 +6,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/bcrisp4/wire/internal/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,6 +65,20 @@ func TestServer_ShutdownIsGraceful(t *testing.T) {
 func TestServer_RejectsMissingLogger(t *testing.T) {
 	_, err := NewServer(Options{Listen: "127.0.0.1:0"})
 	assert.Error(t, err)
+}
+
+func TestServer_AcceptsStore(t *testing.T) {
+	dir := t.TempDir()
+	db, err := store.Open(filepath.Join(dir, "wire.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+	require.NoError(t, store.Migrate(context.Background(), db))
+
+	addr := runTestServer(t, Options{Store: store.New(db)})
+	resp, err := http.Get("http://" + addr + "/api/v1/health")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, 200, resp.StatusCode)
 }
 
 func TestMiddleware_RecoversPanic(t *testing.T) {

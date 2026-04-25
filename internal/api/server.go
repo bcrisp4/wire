@@ -9,12 +9,21 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/bcrisp4/wire/internal/jobs"
+	"github.com/bcrisp4/wire/internal/store"
 )
 
+// Options configures a Server. Logger is required; Store and Queue are required
+// in production wiring (cmd/wire/serve.go) but accepted as nil in tests so
+// route-only checks (health, SPA, middleware) need not stand up a database.
+// Phase 1 REST units add their handlers behind these dependencies.
 type Options struct {
 	Listen string
 	Logger *slog.Logger
 	SPA    http.Handler // optional: served on non-/api routes
+	Store  store.Store  // optional in tests; required by REST handlers
+	Queue  jobs.Queue   // optional in tests; required by handlers that enqueue work
 }
 
 type Server struct {
