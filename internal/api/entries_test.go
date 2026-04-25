@@ -141,6 +141,60 @@ func TestEntries_GETByID_IncludesContent(t *testing.T) {
 	assert.Equal(t, "full body", *got.Content)
 }
 
+// TestEntries_WireKeysAreSnakeCase locks in the snake_case JSON shape for the
+// entries endpoints. Other tests round-trip through model.Entry, which would
+// silently accept PascalCase if the json struct tags ever regressed; this
+// inspects raw keys via map[string]any to catch that directly.
+func TestEntries_WireKeysAreSnakeCase(t *testing.T) {
+	h, repo, cleanup := newEntriesAPI(t)
+	defer cleanup()
+	body := "full body"
+	e := &model.Entry{FeedID: 1, UserID: 1, Hash: "a", Title: "Alpha", Content: &body}
+	mustInsert(t, repo, e)
+
+	// List endpoint.
+	r := httptest.NewRequest("GET", "/api/v1/entries?status=all", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var listRaw struct {
+		Entries []map[string]any `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &listRaw))
+	require.Len(t, listRaw.Entries, 1)
+	got := listRaw.Entries[0]
+	for _, key := range []string{"id", "feed_id", "user_id", "hash", "title", "published_at", "reading_time", "read", "read_at", "saved", "saved_at", "created_at", "changed_at"} {
+		_, ok := got[key]
+		assert.Truef(t, ok, "list entry missing snake_case key %q; got keys %v", key, mapKeys(got))
+	}
+	for _, pascal := range []string{"ID", "FeedID", "UserID", "PublishedAt", "ReadingTime", "ReadAt", "SavedAt", "CreatedAt", "ChangedAt"} {
+		_, ok := got[pascal]
+		assert.Falsef(t, ok, "list entry leaked PascalCase key %q", pascal)
+	}
+
+	// Detail endpoint.
+	r = httptest.NewRequest("GET", "/api/v1/entries/"+strconv.FormatInt(e.ID, 10), nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var detail map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &detail))
+	for _, key := range []string{"id", "feed_id", "user_id", "content", "published_at", "reading_time", "read_at", "saved_at", "created_at", "changed_at"} {
+		_, ok := detail[key]
+		assert.Truef(t, ok, "detail entry missing snake_case key %q; got keys %v", key, mapKeys(detail))
+	}
+}
+
+func mapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 func TestEntries_GETByID_NotFound(t *testing.T) {
 	h, _, cleanup := newEntriesAPI(t)
 	defer cleanup()
