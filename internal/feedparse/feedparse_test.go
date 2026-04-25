@@ -228,3 +228,95 @@ func TestParse_InvalidFeed(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "feedparse:")
 }
+
+// TestParse_SkipsMalformedAndUnsafeLinks ensures the parser drops the link
+// (and the item, when no other usable fields remain) for unparseable URLs and
+// for absolute URLs whose scheme isn't http/https — feeds are untrusted input
+// and these schemes should never be persisted as entry URLs.
+func TestParse_SkipsMalformedAndUnsafeLinks(t *testing.T) {
+	const rssMalformedItems = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Mixed Links Feed</title>
+    <link>https://example.com/</link>
+    <description>desc</description>
+    <item>
+      <title>Valid Item</title>
+      <link>https://example.com/posts/valid</link>
+      <pubDate>Mon, 02 Jan 2006 15:04:05 GMT</pubDate>
+    </item>
+    <item>
+      <title>Unparseable Link</title>
+      <link>http://[::1</link>
+      <pubDate>Mon, 02 Jan 2006 15:04:05 GMT</pubDate>
+    </item>
+    <item>
+      <title>Unsupported Scheme</title>
+      <link>ftp://example.com/posts/ftp-only</link>
+      <pubDate>Mon, 02 Jan 2006 15:04:05 GMT</pubDate>
+    </item>
+    <item>
+      <title>JavaScript Scheme</title>
+      <link>javascript:alert(1)</link>
+      <pubDate>Mon, 02 Jan 2006 15:04:05 GMT</pubDate>
+    </item>
+  </channel>
+</rss>`
+
+	ctx := context.Background()
+	res, err := Parse(ctx, []byte(rssMalformedItems), "https://example.com/feed.xml")
+	require.NoError(t, err)
+	require.NotNil(t, res)
+
+	// All four items have a title, so they are kept; only the valid one
+	// retains a URL — the others have their link cleared.
+	require.Len(t, res.Entries, 4)
+	require.NotNil(t, res.Entries[0].URL)
+	assert.Equal(t, "https://example.com/posts/valid", *res.Entries[0].URL)
+	assert.Nil(t, res.Entries[1].URL, "unparseable link should be cleared")
+	assert.Nil(t, res.Entries[2].URL, "ftp scheme should be cleared")
+	assert.Nil(t, res.Entries[3].URL, "javascript scheme should be cleared")
+}
+
+// TestParse_NonAbsoluteSourceURL verifies that a non-absolute sourceURL is
+// treated as "no base", so relative entry links pass through unchanged rather
+// than being joined against junk.
+func TestParse_NonAbsoluteSourceURL(t *testing.T) {
+	ctx := context.Background()
+	res, err := Parse(ctx, []byte(rssRelativeLinks), "feed.xml")
+	require.NoError(t, err)
+	require.Len(t, res.Entries, 1)
+	require.NotNil(t, res.Entries[0].URL)
+	assert.Equal(t, "/posts/relative", *res.Entries[0].URL)
+}
+
+// TestParse_NoLinkUsesGUIDForHash ensures items lacking a link still have
+// distinct hashes when they carry distinct GUIDs, avoiding deterministic
+// UNIQUE(feed_id, hash) collisions for no-link items with matching titles.
+func TestParse_NoLinkUsesGUIDForHash(t *testing.T) {
+	const rssNoLinks = `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>No Link Feed</title>
+    <link>https://example.com/</link>
+    <description>desc</description>
+    <item>
+      <title>Same Title</title>
+      <guid isPermaLink="false">id-one</guid>
+    </item>
+    <item>
+      <title>Same Title</title>
+      <guid isPermaLink="false">id-two</guid>
+    </item>
+  </channel>
+</rss>`
+
+	ctx := context.Background()
+	res, err := Parse(ctx, []byte(rssNoLinks), "https://example.com/feed.xml")
+	require.NoError(t, err)
+	require.Len(t, res.Entries, 2)
+	assert.Nil(t, res.Entries[0].URL)
+	assert.Nil(t, res.Entries[1].URL)
+	assert.NotEqual(t, res.Entries[0].Hash, res.Entries[1].Hash,
+		"distinct GUIDs must yield distinct hashes for no-link items")
+}

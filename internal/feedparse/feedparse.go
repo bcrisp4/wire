@@ -41,7 +41,13 @@ func Parse(ctx context.Context, body []byte, sourceURL string) (*Result, error) 
 		return nil, fmt.Errorf("feedparse: %w", err)
 	}
 
-	base, _ := url.Parse(sourceURL) // best-effort; nil base means absolute links pass through unchanged
+	// Best-effort base for resolving relative entry links. Treat parse errors
+	// or non-absolute results as "no base" so relative links pass through
+	// unchanged rather than being resolved against a junk base.
+	base, err := url.Parse(sourceURL)
+	if err != nil || !base.IsAbs() {
+		base = nil
+	}
 
 	out := &Result{
 		Title:       strings.TrimSpace(feed.Title),
@@ -62,7 +68,7 @@ func Parse(ctx context.Context, body []byte, sourceURL string) (*Result, error) 
 }
 
 // itemToEntry maps a gofeed.Item to a model.Entry. Returns false if the item
-// is unusable (e.g. neither title nor link).
+// is unusable (e.g. neither title, link, nor GUID).
 func itemToEntry(item *gofeed.Item, base *url.URL) (model.Entry, bool) {
 	if item == nil {
 		return model.Entry{}, false
@@ -70,7 +76,8 @@ func itemToEntry(item *gofeed.Item, base *url.URL) (model.Entry, bool) {
 
 	link := resolveAbsolute(base, item.Link)
 	title := strings.TrimSpace(item.Title)
-	if link == "" && title == "" {
+	guid := strings.TrimSpace(item.GUID)
+	if link == "" && title == "" && guid == "" {
 		return model.Entry{}, false
 	}
 
@@ -93,7 +100,15 @@ func itemToEntry(item *gofeed.Item, base *url.URL) (model.Entry, bool) {
 		e.PublishedAt = &secs
 	}
 
-	e.Hash = EntryHash(link, title, e.PublishedAt)
+	// Hash from the most stable identifier available: prefer the link,
+	// fall back to the feed-supplied GUID. Without one of these, no-link
+	// items with matching title+pubdate would collide under the
+	// UNIQUE(feed_id, hash) constraint.
+	hashKey := link
+	if hashKey == "" {
+		hashKey = guid
+	}
+	e.Hash = EntryHash(hashKey, title, e.PublishedAt)
 
 	return e, true
 }
@@ -129,6 +144,9 @@ func firstAuthor(item *gofeed.Item) string {
 
 // resolveAbsolute resolves rel against base. If rel is already absolute it is
 // returned unchanged; if base is nil and rel is relative, rel is returned as-is.
+// Returns "" if rel is empty, fails to parse, or resolves to an absolute URL
+// with a non-http(s) scheme (feeds are untrusted; e.g. javascript:, data:,
+// file: links should never be persisted as entry URLs).
 func resolveAbsolute(base *url.URL, rel string) string {
 	rel = strings.TrimSpace(rel)
 	if rel == "" {
@@ -136,12 +154,23 @@ func resolveAbsolute(base *url.URL, rel string) string {
 	}
 	ref, err := url.Parse(rel)
 	if err != nil {
-		return rel
+		return ""
 	}
-	if ref.IsAbs() || base == nil {
+	var resolved *url.URL
+	switch {
+	case ref.IsAbs():
+		resolved = ref
+	case base == nil:
+		// Relative URL with no base: pass through unchanged. Cannot validate
+		// scheme yet; the caller (or downstream) decides what to do.
 		return ref.String()
+	default:
+		resolved = base.ResolveReference(ref)
 	}
-	return base.ResolveReference(ref).String()
+	if resolved.Scheme != "http" && resolved.Scheme != "https" {
+		return ""
+	}
+	return resolved.String()
 }
 
 // EntryHash is the dedup key used by store.EntryRepo (unique per feed_id):
