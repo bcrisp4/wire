@@ -1,8 +1,15 @@
 <script lang="ts">
 	import '../app.css';
+	import { onMount } from 'svelte';
 	import { navItems } from '$lib/nav';
+	import Sidebar from '$lib/components/Sidebar.svelte';
+	import { applyStoredPrefs } from '$lib/prefs';
 
 	let { children } = $props();
+
+	onMount(() => {
+		applyStoredPrefs();
+	});
 </script>
 
 <div class="shell">
@@ -16,6 +23,7 @@
 		</nav>
 
 		<!-- Unit 12b: sidebar-content -->
+		<Sidebar />
 		<!-- Unit 12b: end -->
 	</aside>
 
