@@ -89,6 +89,16 @@ func TestCategories_CreateRejectsBlankName(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
 
+func TestCategories_CreateRejectsTrailingJSON(t *testing.T) {
+	ts := newCategoriesTestServer(t)
+
+	resp, err := http.Post(ts.URL+"/api/v1/categories", "application/json",
+		bytes.NewBufferString(`{"name":"News"}{"name":"Tech"}`))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
 func TestCategories_CreateConflictOnDuplicate(t *testing.T) {
 	ts := newCategoriesTestServer(t)
 

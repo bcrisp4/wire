@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -113,14 +114,19 @@ func categoriesDelete(repo store.CategoryRepo, logger *slog.Logger) http.Handler
 }
 
 // decodeCategoryWrite parses {"name": "..."} from r.Body, trims whitespace,
-// and rejects an empty result with 400. Returns false if the response has
-// already been written.
+// and rejects an empty result with 400. Trailing JSON after the first object
+// (e.g. `{"name":"x"}{"name":"y"}`) is also rejected. Returns false if the
+// response has already been written.
 func decodeCategoryWrite(w http.ResponseWriter, r *http.Request) (categoryWriteReq, bool) {
 	var req categoryWriteReq
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		http.Error(w, "invalid JSON body", http.StatusBadRequest)
+		return req, false
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		http.Error(w, "invalid JSON body: trailing data", http.StatusBadRequest)
 		return req, false
 	}
 	req.Name = strings.TrimSpace(req.Name)
