@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -71,16 +72,24 @@ func searchHandler(s store.Store, log *slog.Logger) http.Handler {
 }
 
 // clampPositiveInt returns def for blank/garbage/non-positive input, and caps
-// any larger value at max.
+// any positive value above max at max — including values that overflow int64,
+// which strconv reports via ErrRange with the value clamped to math.MaxInt64.
 func clampPositiveInt(raw string, def, max int) int {
-	n, err := strconv.Atoi(raw)
-	if err != nil || n <= 0 {
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		// Out-of-range positive (e.g. "999...") still clamps to max.
+		if errors.Is(err, strconv.ErrRange) && n > 0 {
+			return max
+		}
 		return def
 	}
-	if n > max {
+	if n <= 0 {
+		return def
+	}
+	if n > int64(max) {
 		return max
 	}
-	return n
+	return int(n)
 }
 
 func parseNonNegativeInt(raw string, def int) int {

@@ -134,6 +134,7 @@ func TestSearch_ClampsLimit(t *testing.T) {
 		{"defaults_to_50_when_negative", "-3", 50},
 		{"defaults_to_50_when_garbage", "abc", 50},
 		{"caps_at_100", "500", 100},
+		{"caps_at_100_when_overflows_int", "99999999999999999999", 100},
 		{"passes_through_in_range", "25", 25},
 	}
 	for _, tc := range cases {
