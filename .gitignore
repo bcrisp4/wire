@@ -18,8 +18,8 @@ web/build/
 web/.env
 web/.env.local
 
-# Embedded SPA build artifacts (committed only via Dockerfile)
-internal/web/dist/
+# Embedded SPA build artifacts: tracked so `git clone && make extension && go build` works without npm.
+# Re-generate locally with `cd web && npm run build`.
 
 # Honker extension build artifacts
 build/
