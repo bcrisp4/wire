@@ -125,7 +125,9 @@ func (r *feedRepo) ListWithUnreadCounts(ctx context.Context, userID int64) ([]Fe
 		`SELECT `+feedColumnsQualified+`,
 		        COALESCE(SUM(CASE WHEN entries.read = 0 THEN 1 ELSE 0 END), 0) AS unread_count
 		   FROM feeds
-		   LEFT JOIN entries ON entries.feed_id = feeds.id
+		   LEFT JOIN entries
+		          ON entries.feed_id = feeds.id
+		         AND entries.user_id = feeds.user_id
 		  WHERE feeds.user_id = ?
 		  GROUP BY feeds.id
 		  ORDER BY feeds.id`, userID)

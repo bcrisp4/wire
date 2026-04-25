@@ -52,8 +52,12 @@ func (r *categoryRepo) ListWithUnreadCounts(ctx context.Context, userID int64) (
 		`SELECT categories.id, categories.user_id, categories.name,
 		        COALESCE(SUM(CASE WHEN entries.read = 0 THEN 1 ELSE 0 END), 0) AS unread_count
 		   FROM categories
-		   LEFT JOIN feeds   ON feeds.category_id = categories.id
-		   LEFT JOIN entries ON entries.feed_id   = feeds.id
+		   LEFT JOIN feeds
+		          ON feeds.category_id = categories.id
+		         AND feeds.user_id = categories.user_id
+		   LEFT JOIN entries
+		          ON entries.feed_id = feeds.id
+		         AND entries.user_id = categories.user_id
 		  WHERE categories.user_id = ?
 		  GROUP BY categories.id
 		  ORDER BY categories.name`,
