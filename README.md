@@ -33,7 +33,7 @@ docker run --rm -v wire-data:/data -p 8080:8080 wire:foundation
 | `WIRE_LISTEN` | `:8080` | HTTP listen address |
 | `WIRE_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `WIRE_LOG_FORMAT` | `json` | `json` \| `text` |
-| `WIRE_HONKER_EXTENSION_PATH` | `./build/libhonker_extension.so` | Honker SQLite extension cdylib path |
+| `WIRE_HONKER_EXTENSION_PATH` | `./build/libhonker_ext.so` | Honker SQLite extension cdylib path |
 
 ## License
 

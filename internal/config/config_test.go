@@ -13,7 +13,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, ":8080", cfg.Listen)
 	assert.Equal(t, "info", cfg.LogLevel)
 	assert.Equal(t, "json", cfg.LogFormat)
-	assert.Equal(t, "./build/libhonker_extension.so", cfg.HonkerExtensionPath)
+	assert.Equal(t, "./build/libhonker_ext.so", cfg.HonkerExtensionPath)
 }
 
 func TestLoad_Overrides(t *testing.T) {

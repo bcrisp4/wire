@@ -30,7 +30,7 @@ func load(getenv func(string) string) (*Config, error) {
 		Listen:              or(getenv("WIRE_LISTEN"), ":8080"),
 		LogLevel:            or(getenv("WIRE_LOG_LEVEL"), "info"),
 		LogFormat:           or(getenv("WIRE_LOG_FORMAT"), "json"),
-		HonkerExtensionPath: or(getenv("WIRE_HONKER_EXTENSION_PATH"), "./build/libhonker_extension.so"),
+		HonkerExtensionPath: or(getenv("WIRE_HONKER_EXTENSION_PATH"), "./build/libhonker_ext.so"),
 	}
 	if !validLogLevels[c.LogLevel] {
 		return nil, fmt.Errorf("invalid WIRE_LOG_LEVEL %q (want debug|info|warn|error)", c.LogLevel)
