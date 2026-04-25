@@ -1,0 +1,33 @@
+# Go
+/wire
+/dist
+*.test
+*.out
+coverage.txt
+
+# SQLite
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Node / SvelteKit
+web/node_modules/
+web/.svelte-kit/
+web/build/
+web/.env
+web/.env.local
+
+# Embedded SPA build artifacts (committed only via Dockerfile)
+internal/web/dist/
+
+# Honker extension build artifacts
+build/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
