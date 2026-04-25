@@ -16,19 +16,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeStore is a test double that lets tests stub the EntryRepo. Only Entries()
+// searchFakeStore is a test double that lets tests stub the EntryRepo. Only Entries()
 // is wired up; the other promoted methods come from the embedded store.Store,
 // so calling them with no concrete implementation set will panic loudly.
-type fakeStore struct {
+type searchFakeStore struct {
 	store.Store
 	entries store.EntryRepo
 }
 
-func (f *fakeStore) Entries() store.EntryRepo { return f.entries }
+func (f *searchFakeStore) Entries() store.EntryRepo { return f.entries }
 
 // registerCategoryRoutes (added by Unit 7) stores the repo in handler closures
 // only, so returning nil is safe as long as no test hits /api/v1/categories.
-func (f *fakeStore) Categories() store.CategoryRepo { return nil }
+func (f *searchFakeStore) Categories() store.CategoryRepo { return nil }
 
 type fakeEntryRepo struct {
 	store.EntryRepo
@@ -52,7 +52,7 @@ func (f *fakeEntryRepo) Search(_ context.Context, userID int64, query string, li
 }
 
 func newSearchTestServer(repo store.EntryRepo) http.Handler {
-	st := &fakeStore{entries: repo}
+	st := &searchFakeStore{entries: repo}
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/search", searchHandler(st, nil))
 	return mux
@@ -248,7 +248,7 @@ func TestSearch_NilEntriesEncodesAsEmptyArray(t *testing.T) {
 
 func TestSearch_RegisteredOnServerMux(t *testing.T) {
 	repo := &fakeEntryRepo{results: []model.Entry{{ID: 42, Title: "hit"}}}
-	st := &fakeStore{entries: repo}
+	st := &searchFakeStore{entries: repo}
 
 	addr := runTestServer(t, Options{Store: st})
 	resp, err := http.Get("http://" + addr + "/api/v1/search?q=go")
