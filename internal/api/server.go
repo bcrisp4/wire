@@ -40,21 +40,30 @@ func NewServer(opts Options) (*Server, error) {
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /api/v1/health", healthHandler())
+
+	// Unit 7: categories
+	if opts.Store != nil {
+		registerCategoryRoutes(mux, opts.Store.Categories(), opts.Logger)
+	}
+	// End Unit 7
+
 	if opts.SPA != nil {
 		mux.Handle("/", opts.SPA)
 	}
 
-	chain := requestLogger(opts.Logger)(panicRecover(opts.Logger)(mux))
-
 	return &Server{
 		opts: opts,
 		http: &http.Server{
-			Handler:           chain,
+			Handler:           requestLogger(opts.Logger)(panicRecover(opts.Logger)(mux)),
 			ReadHeaderTimeout: 10 * time.Second,
 		},
 		ready: make(chan struct{}),
 	}, nil
 }
+
+// Handler returns the fully-chained HTTP handler. Useful for httptest.NewServer
+// in unit tests so they exercise the same middleware stack as production.
+func (s *Server) Handler() http.Handler { return s.http.Handler }
 
 // Run blocks until ctx is canceled or the server fails.
 func (s *Server) Run(ctx context.Context) error {
